@@ -1,7 +1,16 @@
-.env
-*.db
+# Python
 __pycache__/
-*.pyc
+*.py[cod]
 .venv/
-bot.log
+env/
+venv/
+venv_bak/
+
+# Environment
+.env
+
+# Database
+bot_database.db
+
+# OS
 .DS_Store
