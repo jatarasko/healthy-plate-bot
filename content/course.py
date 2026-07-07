@@ -10,15 +10,15 @@
 }
 """
 
-# Шлях до зображень
+# Відносні шляхи до зображень у репозиторії
 IMAGES = {
-    "plate": "/Users/taraskolodii/KolodiiOS/bots/healthy_plate_bot/assets/тарілка.jpeg",
-    "hand_protein": "/Users/taraskolodii/KolodiiOS/projects/online_support/materials/assessments/долоня білок.png",
-    "hand_carbs": "/Users/taraskolodii/KolodiiOS/projects/online_support/materials/assessments/долоня вуглеводи.png",
-    "hand_fat": "/Users/taraskolodii/KolodiiOS/projects/online_support/materials/assessments/долоня жир.png",
-    "hand_meat_fish": "/Users/taraskolodii/KolodiiOS/projects/online_support/materials/assessments/долоня мясо риба.png",
-    "hand_veggies": "/Users/taraskolodii/KolodiiOS/projects/online_support/materials/assessments/долоня овочі зелень.png",
-    "hand_sweet": "/Users/taraskolodii/KolodiiOS/projects/online_support/materials/assessments/долоня солодке.png",
+    "plate": "assets/images/day1_plate.jpeg",
+    "hand_protein": "assets/images/day2_hand_protein.png",
+    "hand_carbs": "assets/images/day3_hand_carbs.png",
+    "hand_fat": "assets/images/day4_hand_fat.png",
+    "hand_meat_fish": "assets/images/day2_hand_meat_fish.png",
+    "hand_veggies": "assets/images/day3_hand_veggies.png",
+    "hand_sweet": "assets/images/day3_hand_sweet.png",
 }
 
 # Привітальне повідомлення (перед Днем 1)

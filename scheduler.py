@@ -4,6 +4,7 @@ import asyncio
 import logging
 import os
 from datetime import datetime, timedelta
+from pathlib import Path
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.date import DateTrigger
@@ -18,6 +19,13 @@ from bot_utils.keyboards import feedback_keyboard, next_button
 logger = logging.getLogger(__name__)
 
 scheduler = AsyncIOScheduler()
+
+PROJECT_ROOT = Path(__file__).resolve().parent
+
+
+def _resolve_asset_path(relative_path: str) -> Path:
+    """Resolve a repository-relative asset path against the project root."""
+    return PROJECT_ROOT / relative_path
 
 
 def init_scheduler():
@@ -62,22 +70,24 @@ async def send_block(bot: Bot, user_id: int, day: int, block_idx: int):
             logger.error(f"Помилка відправки повідомлення user {user_id}: {e}")
 
     if image_key:
-        image_path = IMAGES.get(image_key, "")
-        if not image_path:
+        image_rel_path = IMAGES.get(image_key, "")
+        if not image_rel_path:
             logger.error(f"Ключ фото {image_key} не знайдено в IMAGES")
-        elif not os.path.exists(image_path):
-            logger.error(f"Файл фото не існує: {image_path}")
         else:
-            try:
-                logger.info(f"Відправляю фото: {image_path}")
-                await bot.send_photo(
-                    chat_id=user_id,
-                    photo=FSInputFile(image_path),
-                    caption="📸 Метод долоні — твій орієнтир порцій",
-                )
-                await asyncio.sleep(0.5)
-            except Exception as e:
-                logger.error(f"Помилка відправки фото {image_key} ({image_path}): {e}")
+            image_path = _resolve_asset_path(image_rel_path)
+            if not os.path.exists(image_path):
+                logger.error(f"Файл фото не існує: {image_rel_path}")
+            else:
+                try:
+                    logger.info(f"Відправляю фото: {image_rel_path}")
+                    await bot.send_photo(
+                        chat_id=user_id,
+                        photo=FSInputFile(str(image_path)),
+                        caption="📸 Метод долоні — твій орієнтир порцій",
+                    )
+                    await asyncio.sleep(0.5)
+                except Exception as e:
+                    logger.error(f"Помилка відправки фото {image_key} ({image_rel_path}): {e}")
 
     if block_idx < len(blocks) - 1:
         await bot.send_message(
