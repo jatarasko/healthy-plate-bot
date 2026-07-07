@@ -6,7 +6,7 @@
   },
   "deploy": {
     "startCommand": "python main.py",
-    "restartPolicyType": "ON_FORMER_PROCESS_GROUP",
+    "restartPolicyType": "ALWAYS",
     "sleepApplicationDuringPeriodsWithNoTraffic": false
   }
 }
