@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+import threading
 
 from aiogram import Bot, Dispatcher
 from aiogram.enums import ParseMode
@@ -13,12 +14,20 @@ from scheduler import init_scheduler, stop_scheduler
 from handlers.start import router as start_router
 from handlers.course import router as course_router
 
+# Import health server for Railway
+from health_server import start_health_server
+
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
 async def main():
     """Запуск бота."""
+    logger.info("Запуск health server для Railway...")
+    # Start health server in a separate thread
+    health_thread = threading.Thread(target=start_health_server, daemon=True)
+    health_thread.start()
+
     logger.info("Ініціалізація бази даних...")
     await init_db()
 
