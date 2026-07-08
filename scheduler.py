@@ -3,8 +3,9 @@
 import asyncio
 import logging
 import os
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
+import zoneinfo
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.date import DateTrigger
@@ -124,15 +125,18 @@ async def send_full_course(bot: Bot, user_id: int):
 
 
 def schedule_next_day(bot: Bot, user_id: int, next_day: int):
-    """Запланувати відправку наступного дня о 9:00."""
-    tomorrow = datetime.now() + timedelta(days=1)
-    send_time = tomorrow.replace(hour=9, minute=0, second=0, microsecond=0)
+    """Запланувати відправку наступного дня о 9:00 за київським часом."""
+    KYIV = zoneinfo.ZoneInfo("Europe/Kyiv")
+
+    now_kyiv = datetime.now(KYIV)
+    tomorrow_kyiv = (now_kyiv + timedelta(days=1)).replace(hour=9, minute=0, second=0, microsecond=0)
+    send_time_utc = tomorrow_kyiv.astimezone(timezone.utc)
 
     scheduler.add_job(
         send_day,
-        trigger=DateTrigger(run_date=send_time),
+        trigger=DateTrigger(run_date=send_time_utc),
         args=[bot, user_id, next_day],
         id=f"day_{next_day}_user_{user_id}",
         replace_existing=True,
     )
-    logger.info(f"Заплановано День {next_day} для user {user_id} на {send_time}")
+    logger.info(f"Заплановано День {next_day} для user {user_id} на {tomorrow_kyiv} (Kyiv)")
