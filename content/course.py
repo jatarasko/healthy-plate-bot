@@ -19,6 +19,7 @@ IMAGES = {
     "hand_meat_fish": "assets/images/day2_hand_meat_fish.png",
     "hand_veggies": "assets/images/day3_hand_veggies.png",
     "hand_sweet": "assets/images/day3_hand_sweet.png",
+    "hand_protein_new": "assets/images/day2_hand_protein_new.png",
 }
 
 # Привітальне повідомлення (перед Днем 1)
@@ -204,7 +205,7 @@ DAY_2 = [
 
 Приклад: курка + гречка, яйця + овочі, рис + квасоля, хумус + тост.""",
         ],
-        "image": "hand_meat_fish",
+        "image": "hand_protein_new",
     },
     # Блок 4: Практична порада + завдання + підсумок + фото долоня (білок)
     {
