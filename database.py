@@ -17,9 +17,15 @@ async def init_db():
                 registered_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 current_day INTEGER DEFAULT 0,
                 is_active INTEGER DEFAULT 1,
-                feedback_sent INTEGER DEFAULT 0
+                feedback_sent INTEGER DEFAULT 0,
+                payment_status INTEGER DEFAULT 0
             )
         """)
+        # Безпечна міграція: додаємо payment_status, якщо його немає
+        try:
+            await db.execute("ALTER TABLE users ADD COLUMN payment_status INTEGER DEFAULT 0")
+        except Exception:
+            pass  # Стовпець вже існує
         await db.execute("""
             CREATE TABLE IF NOT EXISTS message_log (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -100,6 +106,16 @@ async def get_users_for_day(day: int):
         ) as cursor:
             rows = await cursor.fetchall()
             return [dict(row) for row in rows]
+
+
+async def set_payment_status(user_id: int, status: int = 1):
+    """Встановити статус оплати користувача."""
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        await db.execute(
+            "UPDATE users SET payment_status = ? WHERE user_id = ?",
+            (status, user_id)
+        )
+        await db.commit()
 
 
 async def get_stats():

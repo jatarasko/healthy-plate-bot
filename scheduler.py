@@ -107,9 +107,8 @@ async def send_block(bot: Bot, user_id: int, day: int, block_idx: int):
         )
         schedule_next_day(bot, user_id, day + 1)
         return
-
+    # Курс завершено (день 5)
     try:
-        await update_user_day(user_id, 6)
         await bot.send_message(
             chat_id=user_id,
             text="📝 Залиш відгук про курс — і отримай PDF «9 фішок здорового харчування» у подяку!",

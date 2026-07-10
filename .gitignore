@@ -14,3 +14,4 @@ bot_database.db
 
 # OS
 .DS_Store
+bot.log
