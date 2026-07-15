@@ -62,8 +62,11 @@ async def main():
     dp = Dispatcher()
 
     # Реєстрація хендлерів
-    dp.include_router(start_router)
+    # Stateful handlers must be registered before the generic text fallback
+    # in start_router. Otherwise every feedback answer is consumed by
+    # handle_any_message before FeedbackState.answering gets a chance to run.
     dp.include_router(course_router)
+    dp.include_router(start_router)
     admin_handlers.register_admin_handlers(dp)  # Підключаємо адмін-команди
 
     # Видаляємо вебхук (якщо був) і запускаємо polling

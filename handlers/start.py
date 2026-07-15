@@ -3,7 +3,7 @@
 import logging
 
 from aiogram import Router, F
-from aiogram.filters import CommandStart, Command
+from aiogram.filters import CommandStart, Command, StateFilter
 from aiogram.types import Message, CallbackQuery
 from aiogram.fsm.context import FSMContext
 
@@ -139,9 +139,9 @@ async def cmd_status(message: Message):
     await message.answer(f"📊 Твій статус:\n{status}")
 
 
-@router.message(F.text)
+@router.message(F.text, ~StateFilter(FeedbackState.answering))
 async def handle_any_message(message: Message):
-    """Заглушка на будь-які повідомлення від клієнта."""
+    """Заглушка на текстові повідомлення поза фідбек-анкетою."""
     # Ігнорувати команди (вони обробляються іншими хендлерами)
     if message.text.startswith("/"):
         return

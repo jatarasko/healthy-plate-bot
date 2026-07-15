@@ -134,7 +134,7 @@ async def send_block(bot: Bot, user_id: int, day: int, block_idx: int):
         try:
             await bot.send_message(
                 chat_id=user_id,
-                text="📝 Залиш відгук про курс — і отримай PDF «9 фішок здорового харчування» у подяку!",
+                text="📝 Залиш відгук про курс — і отримай PDF «9 фішок харчування для схуднення» у подяку!",
                 reply_markup=feedback_keyboard(),
             )
         except Exception as e:

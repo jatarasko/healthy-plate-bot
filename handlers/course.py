@@ -1,7 +1,9 @@
 """Хендлер курсу — фідбек, CTA."""
 
+from pathlib import Path
+
 from aiogram import Router, F
-from aiogram.types import CallbackQuery, Message, InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.types import CallbackQuery, Message, FSInputFile
 from aiogram.fsm.context import FSMContext
 
 from database import mark_feedback_sent
@@ -11,10 +13,14 @@ from bot_utils.keyboards import feedback_keyboard, cta_keyboard
 
 router = Router()
 
+FEEDBACK_BONUS_PATH = (
+    Path(__file__).resolve().parent.parent / "assets" / "9_fishok_premium_guide.pdf"
+)
 
-@router.message(FeedbackState.answering)
+
+@router.message(FeedbackState.answering, F.text, ~F.text.startswith("/"))
 async def process_feedback_answer(message: Message, state: FSMContext):
-    """Обробка відповідей на фідбек-анкету."""
+    """Обробка текстових відповідей на фідбек-анкету."""
     data = await state.get_data()
     question = data.get("question", 0)
     answers = data.get("answers", [])
@@ -29,12 +35,17 @@ async def process_feedback_answer(message: Message, state: FSMContext):
             parse_mode="HTML",
         )
     else:
-        await state.clear()
-        await mark_feedback_sent(message.from_user.id)
         await message.answer(
             FEEDBACK_THANKS,
             parse_mode="HTML",
         )
+        await message.answer_document(
+            document=FSInputFile(FEEDBACK_BONUS_PATH),
+            caption="🎁 <b>Твій бонус — PDF «9 фішок харчування для схуднення»</b>",
+            parse_mode="HTML",
+        )
+        await mark_feedback_sent(message.from_user.id)
+        await state.clear()
         await message.answer(
             "🎯 <b>Що далі?</b>\n\nОбери свій наступний крок 👇",
             reply_markup=cta_keyboard(),
