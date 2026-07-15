@@ -1,21 +1,85 @@
 """Хендлер курсу — фідбек, CTA."""
 
+import html
+import logging
 from pathlib import Path
 
 from aiogram import Router, F
-from aiogram.types import CallbackQuery, Message, FSInputFile
+from aiogram.types import (
+    CallbackQuery,
+    Message,
+    FSInputFile,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+)
 from aiogram.fsm.context import FSMContext
 
+from config import ADMIN_ID
 from database import mark_feedback_sent
 from states import FeedbackState
 from content.course import FEEDBACK_QUESTIONS, FEEDBACK_THANKS
 from bot_utils.keyboards import feedback_keyboard, cta_keyboard
 
 router = Router()
+logger = logging.getLogger(__name__)
 
 FEEDBACK_BONUS_PATH = (
     Path(__file__).resolve().parent.parent / "assets" / "9_fishok_premium_guide.pdf"
 )
+ONLINE_SUPPORT_BOT_URL = "https://t.me/kolodiifitness_bot?start=healthy_plate"
+
+
+async def _notify_admin_about_interest(
+    callback: CallbackQuery,
+    offer_name: str,
+) -> bool:
+    """Надіслати адміну заявку з кнопки після завершення курсу."""
+    if not ADMIN_ID:
+        logger.error("ADMIN_ID не налаштовано; заявку '%s' не надіслано", offer_name)
+        return False
+
+    user = callback.from_user
+    safe_name = html.escape(user.full_name)
+    safe_username = html.escape(f"@{user.username}") if user.username else "не вказано"
+
+    try:
+        await callback.bot.send_message(
+            ADMIN_ID,
+            "🔔 <b>Нова заявка після курсу «Здорова Тарілка»</b>\n\n"
+            f"Продукт: <b>{html.escape(offer_name)}</b>\n"
+            f"Користувач: <a href=\"tg://user?id={user.id}\">{safe_name}</a>\n"
+            f"Username: {safe_username}\n"
+            f"Telegram ID: <code>{user.id}</code>",
+            parse_mode="HTML",
+        )
+    except Exception:
+        logger.exception(
+            "Не вдалося повідомити адміна про заявку '%s' від user %s",
+            offer_name,
+            user.id,
+        )
+        return False
+
+    return True
+
+
+async def _confirm_admin_notification(
+    callback: CallbackQuery,
+    offer_name: str,
+) -> None:
+    """Підтвердити користувачу результат передавання заявки."""
+    notified = await _notify_admin_about_interest(callback, offer_name)
+    if notified:
+        await callback.message.answer(
+            "✅ <b>Заявку передано адміністратору.</b>\n\n"
+            "Він напише тобі в Telegram, розповість деталі та допоможе з оформленням.",
+            parse_mode="HTML",
+        )
+    else:
+        await callback.message.answer(
+            "⚠️ Не вдалося автоматично передати заявку адміністратору. "
+            "Скористайся кнопкою «Звернутись в підтримку».",
+        )
 
 
 @router.message(FeedbackState.answering, F.text, ~F.text.startswith("/"))
@@ -61,13 +125,18 @@ async def cta_handler(callback: CallbackQuery):
     if cta == "recipes":
         await callback.answer()
         await callback.message.answer(
-            "📖 <b>Книга рецептів «Здорова Тарілка»</b>\n\n"
-            "45 рецептів здорового харчування за методом Здорової Тарілки.\n"
-            "PDF-формат, зручне форматування, список продуктів.\n\n"
-            "💰 <b>Ціна: 299 ₴</b>\n\n"
-            "Для замовлення напишіть Тарасу @Taras_Kolodii",
+            "📖 <b>Набір рецептів «Здорова Тарілка» + бонуси</b>\n\n"
+            "У наборі:\n"
+            "• 45 збалансованих рецептів із КБЖУ\n"
+            "• 15 сніданків, 15 обідів і 15 вечерь\n"
+            "• готові порції за методом Здорової Тарілки\n"
+            "• трекер харчування\n"
+            "• список продуктів для зручних закупівель\n\n"
+            "📄 Зручний PDF — можна зберегти в телефоні або роздрукувати.\n\n"
+            "💰 <b>Ціна: 299 ₴</b>",
             parse_mode="HTML",
         )
+        await _confirm_admin_notification(callback, "Набір рецептів + бонуси")
         return
 
     if cta == "consultation":
@@ -78,27 +147,28 @@ async def cta_handler(callback: CallbackQuery):
             "• Аналіз поточного харчування\n"
             "• Індивідуальні рекомендації\n"
             "• Відповіді на питання\n\n"
-            "💰 <b>Ціна: 1000 ₴</b>\n\n"
-            "Для запису напишіть Тарасу @Taras_Kolodii",
+            "💰 <b>Ціна: 1000 ₴</b>",
             parse_mode="HTML",
         )
+        await _confirm_admin_notification(callback, "Консультація з Тарасом")
         return
 
     if cta == "online":
         await callback.answer()
         await callback.message.answer(
             "📱 <b>Онлайн-супровід Kolodii Fitness</b>\n\n"
-            "Повна програма: харчування + тренування + щоденні чек-іни.\n\n"
-            "🥗 <b>Пакет «Харчування»</b> — 2500 ₴/міс\n"
-            "   • Індивідуальний план харчування\n"
-            "   • Щоденний супровід у Telegram\n"
-            "   • Шпаргалки та рецепти\n\n"
-            "🏆 <b>Пакет «Наставництво»</b> — 400$ / 3 міс\n"
-            "   • Все з пакету «Харчування»\n"
-            "   • Персональні тренування\n"
-            "   • Тижневі відео-сесії з Тарасом\n"
-            "   • Стратегічні сесії раз на місяць\n\n"
-            "Для запису напишіть Тарасу @Taras_Kolodii",
+            "Перейди до бота, щоб переглянути презентацію, формат роботи, "
+            "вартість і залишити заявку.",
+            reply_markup=InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [
+                        InlineKeyboardButton(
+                            text="▶️ Переглянути презентацію",
+                            url=ONLINE_SUPPORT_BOT_URL,
+                        )
+                    ]
+                ]
+            ),
             parse_mode="HTML",
         )
         return
@@ -107,9 +177,13 @@ async def cta_handler(callback: CallbackQuery):
         await callback.answer()
         await callback.message.answer(
             "🏃‍♂️ <b>Курс «Рухова активність»</b>\n\n"
-            "Наразі курс у розробці. Ми повідомимо тобі, коли він буде готовий! 💪",
+            "Практичний курс, який допоможе додати більше руху у повсякденне життя, "
+            "підібрати активність під свій рівень і сформувати стабільну звичку.\n\n"
+            "✅ <b>Курс уже доступний.</b> Адміністратор розповість про умови та "
+            "допоможе отримати доступ.",
             parse_mode="HTML",
         )
+        await _confirm_admin_notification(callback, "Курс «Рухова активність»")
         return
 
     if cta == "contact_support":
