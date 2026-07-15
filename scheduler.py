@@ -20,6 +20,7 @@ from database import (
     update_user_after_send,
     set_sending_status,
     get_users_for_recovery,
+    has_course_access,
     update_user_day
 )
 from content.course import get_day_blocks, IMAGES
@@ -49,6 +50,9 @@ def stop_scheduler():
 
 async def send_day(bot: Bot, user_id: int, day: int):
     """Відправити перший блок дня курсу користувачу."""
+    if not await has_course_access(user_id):
+        logger.warning("Відправку дня %s заблоковано: user %s не має доступу", day, user_id)
+        return
     await send_block(bot, user_id, day=day, block_idx=0)
 
 

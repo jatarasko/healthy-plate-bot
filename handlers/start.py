@@ -7,7 +7,10 @@ from aiogram.filters import CommandStart, Command, StateFilter
 from aiogram.types import Message, CallbackQuery
 from aiogram.fsm.context import FSMContext
 
-from database import register_user, get_user
+from access import sales_keyboard
+from access_token import validate_access_token
+from config import ACCESS_TOKEN_SECRET
+from database import grant_course_access, has_course_access, register_user, get_user
 from bot_utils.keyboards import start_course_keyboard
 from states import CourseState, FeedbackState
 from content.course import WELCOME_MSG, FEEDBACK_QUESTIONS
@@ -21,6 +24,26 @@ logger = logging.getLogger(__name__)
 async def cmd_start(message: Message):
     """Обробка команди /start — реєстрація та привітання."""
     user = message.from_user
+    parts = (message.text or "").split(maxsplit=1)
+    payload = parts[1] if len(parts) == 2 else ""
+    if not await has_course_access(user.id) and payload.startswith("access_"):
+        grant = validate_access_token(
+            payload.removeprefix("access_"),
+            user.id,
+            "course_healthy_plate",
+            ACCESS_TOKEN_SECRET,
+        )
+        if grant:
+            await grant_course_access(user.id, grant.fingerprint)
+            await message.answer("✅ <b>Оплату підтверджено. Доступ до курсу активовано.</b>")
+    if not await has_course_access(user.id):
+        await message.answer(
+            "🔒 <b>Курс доступний після оплати.</b>\n\n"
+            "Персональне посилання надходить після підтвердження оплати. "
+            "Звичайне або переслане посилання не відкриває матеріали.",
+            reply_markup=sales_keyboard(),
+        )
+        return
     await register_user(
         user_id=user.id,
         username=user.username or "",

@@ -7,7 +7,14 @@ from aiogram import Bot, Dispatcher
 from aiogram.types import Message
 from aiogram.filters import Command
 
-from database import get_user, get_users_for_recovery, update_user_after_send, set_sending_status
+from database import (
+    get_user,
+    get_users_for_recovery,
+    grant_course_access,
+    revoke_course_access,
+    update_user_after_send,
+    set_sending_status,
+)
 from config import ADMIN_ID
 from scheduler import send_day  # Імпортуємо функцію відправки
 
@@ -85,6 +92,30 @@ def register_admin_handlers(dp: Dispatcher):
             error_msg = f"❌ Помилка при відправці дня {missed_day}: {e}"
             logger.error(error_msg)
             await message.answer(error_msg)
+
+    @dp.message(Command("grant_access"))
+    async def grant_access_command(message: Message):
+        if message.from_user.id != ADMIN_ID:
+            return
+        parts = (message.text or "").split()
+        if len(parts) != 2 or not parts[1].isdigit():
+            await message.answer("Використання: /grant_access TELEGRAM_ID")
+            return
+        user_id = int(parts[1])
+        await grant_course_access(user_id, "manual-admin-grant")
+        await message.answer(f"✅ Доступ надано користувачу {user_id}.")
+
+    @dp.message(Command("revoke_access"))
+    async def revoke_access_command(message: Message):
+        if message.from_user.id != ADMIN_ID:
+            return
+        parts = (message.text or "").split()
+        if len(parts) != 2 or not parts[1].isdigit():
+            await message.answer("Використання: /revoke_access TELEGRAM_ID")
+            return
+        user_id = int(parts[1])
+        await revoke_course_access(user_id)
+        await message.answer(f"🔒 Доступ користувача {user_id} відкликано.")
 
     @dp.message(Command("stats"))
     async def stats_command(message: Message):

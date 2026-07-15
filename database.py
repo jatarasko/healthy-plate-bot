@@ -67,8 +67,52 @@ async def init_db():
                 FOREIGN KEY (user_id) REFERENCES users(user_id)
             )
         """)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS access_grants (
+                user_id INTEGER PRIMARY KEY,
+                token_fingerprint TEXT NOT NULL,
+                granted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
         await db.commit()
         logger.info(f"✅ База даних ініціалізована. Шлях: {DATABASE_PATH}")
+
+
+async def grant_course_access(user_id: int, token_fingerprint: str) -> None:
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        await db.execute(
+            """
+            INSERT INTO access_grants (user_id, token_fingerprint)
+            VALUES (?, ?)
+            ON CONFLICT(user_id) DO UPDATE SET
+                token_fingerprint = excluded.token_fingerprint,
+                granted_at = CURRENT_TIMESTAMP
+            """,
+            (user_id, token_fingerprint),
+        )
+        await db.execute(
+            "UPDATE users SET is_active = 1, course_status = 'active' WHERE user_id = ?",
+            (user_id,),
+        )
+        await db.commit()
+
+
+async def has_course_access(user_id: int) -> bool:
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        async with db.execute(
+            "SELECT 1 FROM access_grants WHERE user_id = ?", (user_id,)
+        ) as cursor:
+            return await cursor.fetchone() is not None
+
+
+async def revoke_course_access(user_id: int) -> None:
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        await db.execute("DELETE FROM access_grants WHERE user_id = ?", (user_id,))
+        await db.execute(
+            "UPDATE users SET is_active = 0, course_status = 'revoked' WHERE user_id = ?",
+            (user_id,),
+        )
+        await db.commit()
 
 async def register_user(user_id: int, username: str, first_name: str, last_name: str):
     """Реєстрація нового користувача або оновлення існуючого."""
@@ -137,6 +181,10 @@ async def get_users_for_recovery():
             SELECT * FROM users 
             WHERE is_active = 1 
             AND course_status = 'active'
+            AND EXISTS (
+                SELECT 1 FROM access_grants
+                WHERE access_grants.user_id = users.user_id
+            )
             AND (
                 current_day > last_sent_day + 1 
                 OR (sending_status = 'sending' AND sending_started_at < ?)
@@ -164,7 +212,14 @@ async def get_all_active_users():
     """Отримати всіх активних користувачів."""
     async with aiosqlite.connect(DATABASE_PATH) as db:
         db.row_factory = aiosqlite.Row
-        async with db.execute("SELECT * FROM users WHERE is_active = 1") as cursor:
+        async with db.execute("""
+            SELECT * FROM users
+            WHERE is_active = 1
+              AND EXISTS (
+                  SELECT 1 FROM access_grants
+                  WHERE access_grants.user_id = users.user_id
+              )
+        """) as cursor:
             rows = await cursor.fetchall()
             return [dict(row) for row in rows]
 
@@ -173,7 +228,14 @@ async def get_users_for_day(day: int):
     async with aiosqlite.connect(DATABASE_PATH) as db:
         db.row_factory = aiosqlite.Row
         async with db.execute(
-            "SELECT * FROM users WHERE is_active = 1 AND current_day = ?",
+            """
+            SELECT * FROM users
+            WHERE is_active = 1 AND current_day = ?
+              AND EXISTS (
+                  SELECT 1 FROM access_grants
+                  WHERE access_grants.user_id = users.user_id
+              )
+            """,
             (day,)
         ) as cursor:
             rows = await cursor.fetchall()

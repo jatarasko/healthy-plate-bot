@@ -17,6 +17,7 @@ from scheduler import init_scheduler, stop_scheduler, recovery_check
 from handlers.start import router as start_router
 from handlers.course import router as course_router
 from handlers import admin as admin_handlers  # Адмін-команди
+from access import CourseAccessMiddleware
 
 # Import health server for Railway
 from health_server import start_health_server
@@ -60,14 +61,18 @@ async def main():
         default=DefaultBotProperties(parse_mode=ParseMode.HTML),
     )
     dp = Dispatcher()
+    dp.message.outer_middleware(CourseAccessMiddleware())
+    dp.callback_query.outer_middleware(CourseAccessMiddleware())
 
     # Реєстрація хендлерів
     # Stateful handlers must be registered before the generic text fallback
     # in start_router. Otherwise every feedback answer is consumed by
     # handle_any_message before FeedbackState.answering gets a chance to run.
+    # Admin commands must be registered before start_router's generic text
+    # fallback, otherwise the fallback consumes commands such as /grant_access.
+    admin_handlers.register_admin_handlers(dp)
     dp.include_router(course_router)
     dp.include_router(start_router)
-    admin_handlers.register_admin_handlers(dp)  # Підключаємо адмін-команди
 
     # Видаляємо вебхук (якщо був) і запускаємо polling
     try:
