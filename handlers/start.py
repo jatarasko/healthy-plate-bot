@@ -92,6 +92,28 @@ async def next_block_handler(callback: CallbackQuery, state: FSMContext):
         await callback.answer("❌ Не вдалося перейти далі. Натисни /start")
         return
 
+    user = await get_user(user_id)
+    if user and user.get("course_status") == "completed":
+        await callback.answer("Курс уже завершено 🎉", show_alert=True)
+        return
+    if user and day <= int(user.get("last_sent_day") or 0):
+        await callback.answer(
+            "Цей навчальний день уже завершено. Очікуй наступний матеріал за графіком.",
+            show_alert=True,
+        )
+        return
+    if user and user.get("progress_waiting_day") is not None:
+        expected = (
+            int(user["progress_waiting_day"]),
+            int(user["progress_waiting_block"]),
+        )
+        if expected != (day, block_idx):
+            await callback.answer(
+                "Цей блок уже пройдено. Скористайся останньою кнопкою «Далі».",
+                show_alert=True,
+            )
+            return
+
     await callback.answer("✅ Чудово! Продовжуй далі.")
     await state.set_state(CourseState.viewing_day)
     await state.update_data(day=day, block_idx=block_idx)
@@ -152,7 +174,9 @@ async def cmd_status(message: Message):
         return
 
     day = user["current_day"]
-    if day == 0:
+    if user.get("course_status") == "completed":
+        status = "Ти завершив(-ла) курс! 🎉"
+    elif day == 0:
         status = "Ти зареєстрований(-а), але ще не почав(-ла) курс."
     elif day <= 5:
         status = f"Ти на дні {day} з 5."

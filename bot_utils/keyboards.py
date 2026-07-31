@@ -64,7 +64,7 @@ def cta_keyboard() -> InlineKeyboardMarkup:
         [
             InlineKeyboardButton(
                 text="📱 Онлайн-супровід",
-                url="https://t.me/kolodiifitness_bot?start=healthy_plate"
+                callback_data="cta_online"
             )
         ],
         [
@@ -76,7 +76,7 @@ def cta_keyboard() -> InlineKeyboardMarkup:
         [
             InlineKeyboardButton(
                 text="🔙 Звернутись в підтримку",
-                callback_data="contact_support"
+                callback_data="cta_contact_support"
             )
         ],
     ])

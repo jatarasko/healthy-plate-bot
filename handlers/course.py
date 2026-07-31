@@ -15,7 +15,7 @@ from aiogram.types import (
 from aiogram.fsm.context import FSMContext
 
 from config import ADMIN_ID
-from database import mark_feedback_sent
+from database import mark_feedback_sent, mark_next_step_selected
 from states import FeedbackState
 from content.course import FEEDBACK_QUESTIONS, FEEDBACK_THANKS
 from bot_utils.keyboards import feedback_keyboard, cta_keyboard
@@ -122,6 +122,16 @@ async def cta_handler(callback: CallbackQuery):
     """Обробка CTA кнопок — з цінами та платними опціями."""
     cta = callback.data.replace("cta_", "")
 
+    offer_names = {
+        "recipes": "Набір рецептів + бонуси",
+        "consultation": "Консультація з Тарасом",
+        "online": "Онлайн-супровід Kolodii Fitness",
+        "movement": "Курс «Рухова активність»",
+        "contact_support": "Звернення в підтримку",
+    }
+    if cta in offer_names:
+        await mark_next_step_selected(callback.from_user.id, offer_names[cta])
+
     if cta == "recipes":
         await callback.answer()
         await callback.message.answer(
@@ -171,6 +181,7 @@ async def cta_handler(callback: CallbackQuery):
             ),
             parse_mode="HTML",
         )
+        await _notify_admin_about_interest(callback, "Онлайн-супровід Kolodii Fitness")
         return
 
     if cta == "movement":

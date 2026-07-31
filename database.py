@@ -4,7 +4,7 @@
 import aiosqlite
 import logging
 from pathlib import Path
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from config import DATABASE_PATH, DAY_DELAY
 
 logger = logging.getLogger(__name__)
@@ -48,7 +48,18 @@ async def init_db():
             ("next_send_at", "TEXT"),
             ("course_status", "TEXT DEFAULT 'active'"),
             ("sending_status", "TEXT DEFAULT 'idle'"),
-            ("sending_started_at", "TEXT")
+            ("sending_started_at", "TEXT"),
+            ("course_completed_at", "TEXT"),
+            ("completion_notified_at", "TEXT"),
+            ("next_step", "TEXT"),
+            ("next_step_selected_at", "TEXT"),
+            ("followup_stage", "INTEGER DEFAULT 0"),
+            ("next_followup_at", "TEXT"),
+            ("progress_waiting_day", "INTEGER"),
+            ("progress_waiting_block", "INTEGER"),
+            ("progress_reminder_stage", "INTEGER DEFAULT 0"),
+            ("next_progress_reminder_at", "TEXT"),
+            ("last_progress_at", "TEXT")
         ]
         for field, definition in migration_fields:
             try:
@@ -56,6 +67,18 @@ async def init_db():
                 logger.info(f"Додано поле {field} до таблиці users")
             except Exception:
                 pass  # Поле вже існує
+
+        # Старих випускників показуємо в адмін-звіті, але не надсилаємо їм
+        # раптові нагадування після деплою нової логіки.
+        await db.execute("""
+            UPDATE users
+            SET course_status = 'completed',
+                course_completed_at = COALESCE(last_sent_at, registered_at),
+                completion_notified_at = COALESCE(completion_notified_at, CURRENT_TIMESTAMP),
+                followup_stage = 2,
+                next_followup_at = NULL
+            WHERE last_sent_day >= 5 AND course_completed_at IS NULL
+        """)
         
         await db.execute("""
             CREATE TABLE IF NOT EXISTS message_log (
@@ -208,6 +231,171 @@ async def mark_feedback_sent(user_id: int):
         await db.execute("UPDATE users SET feedback_sent = 1 WHERE user_id = ?", (user_id,))
         await db.commit()
 
+
+async def mark_course_completed(user_id: int) -> bool:
+    """Зафіксувати завершення курсу. True повертається лише першого разу."""
+    now = datetime.now(timezone.utc)
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        cursor = await db.execute(
+            """
+            UPDATE users
+            SET course_status = 'completed', course_completed_at = ?,
+                followup_stage = 0, next_followup_at = ?
+            WHERE user_id = ? AND course_completed_at IS NULL
+            """,
+            (now.isoformat(), (now + timedelta(days=1)).isoformat(), user_id),
+        )
+        await db.commit()
+        return cursor.rowcount > 0
+
+
+async def mark_completion_notified(user_id: int) -> None:
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        await db.execute(
+            "UPDATE users SET completion_notified_at = ? WHERE user_id = ?",
+            (datetime.now(timezone.utc).isoformat(), user_id),
+        )
+        await db.commit()
+
+
+async def get_unnotified_completions():
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            """SELECT * FROM users
+               WHERE course_completed_at IS NOT NULL AND completion_notified_at IS NULL
+               ORDER BY course_completed_at"""
+        ) as cursor:
+            return [dict(row) for row in await cursor.fetchall()]
+
+
+async def mark_next_step_selected(user_id: int, next_step: str) -> None:
+    """Зберегти вибір учасника та вимкнути подальші нагадування."""
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        await db.execute(
+            """UPDATE users
+               SET next_step = ?, next_step_selected_at = ?, next_followup_at = NULL
+               WHERE user_id = ?""",
+            (next_step, datetime.now(timezone.utc).isoformat(), user_id),
+        )
+        await db.commit()
+
+
+async def get_due_completion_followups():
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            """SELECT * FROM users
+               WHERE course_status = 'completed'
+                 AND next_step_selected_at IS NULL
+                 AND next_followup_at IS NOT NULL
+                 AND next_followup_at <= ? AND followup_stage < 3
+               ORDER BY next_followup_at""",
+            (datetime.now(timezone.utc).isoformat(),),
+        ) as cursor:
+            return [dict(row) for row in await cursor.fetchall()]
+
+
+async def advance_completion_followup(user_id: int, completed_stage: int) -> None:
+    next_at = None
+    if completed_stage in (1, 2):
+        next_at = (datetime.now(timezone.utc) + timedelta(days=2)).isoformat()
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        await db.execute(
+            """UPDATE users SET followup_stage = ?, next_followup_at = ?
+               WHERE user_id = ? AND next_step_selected_at IS NULL""",
+            (completed_stage, next_at, user_id),
+        )
+        await db.commit()
+
+
+async def get_completed_without_next_step(limit: int = 20):
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            """SELECT * FROM users
+               WHERE course_completed_at IS NOT NULL AND next_step_selected_at IS NULL
+               ORDER BY course_completed_at DESC LIMIT ?""",
+            (limit,),
+        ) as cursor:
+            return [dict(row) for row in await cursor.fetchall()]
+
+
+async def set_course_progress_waiting(user_id: int, day: int, next_block: int) -> None:
+    """Зафіксувати кнопку «Далі», на якій очікуємо учасника."""
+    now = datetime.now(timezone.utc)
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        await db.execute(
+            """
+            UPDATE users
+            SET progress_waiting_day = ?, progress_waiting_block = ?,
+                progress_reminder_stage = 0, next_progress_reminder_at = ?,
+                last_progress_at = ?
+            WHERE user_id = ?
+            """,
+            (
+                day,
+                next_block,
+                (now + timedelta(days=1)).isoformat(),
+                now.isoformat(),
+                user_id,
+            ),
+        )
+        await db.commit()
+
+
+async def clear_course_progress_waiting(user_id: int) -> None:
+    """Скасувати нагадування, щойно учасник продовжив або завершив день."""
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        await db.execute(
+            """
+            UPDATE users
+            SET progress_waiting_day = NULL, progress_waiting_block = NULL,
+                progress_reminder_stage = 0, next_progress_reminder_at = NULL,
+                last_progress_at = ?
+            WHERE user_id = ?
+            """,
+            (datetime.now(timezone.utc).isoformat(), user_id),
+        )
+        await db.commit()
+
+
+async def get_due_progress_reminders():
+    """Учасники, які не натиснули очікувану кнопку «Далі» вчасно."""
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            """
+            SELECT * FROM users
+            WHERE course_status = 'active' AND is_active = 1
+              AND progress_waiting_day IS NOT NULL
+              AND progress_waiting_block IS NOT NULL
+              AND next_progress_reminder_at IS NOT NULL
+              AND next_progress_reminder_at <= ?
+              AND progress_reminder_stage < 3
+            ORDER BY next_progress_reminder_at
+            """,
+            (datetime.now(timezone.utc).isoformat(),),
+        ) as cursor:
+            return [dict(row) for row in await cursor.fetchall()]
+
+
+async def advance_progress_reminder(user_id: int, completed_stage: int) -> None:
+    """Наступне нагадування через 2 дні; після ескалації серія завершується."""
+    next_at = None
+    if completed_stage in (1, 2):
+        next_at = (datetime.now(timezone.utc) + timedelta(days=2)).isoformat()
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        await db.execute(
+            """
+            UPDATE users
+            SET progress_reminder_stage = ?, next_progress_reminder_at = ?
+            WHERE user_id = ? AND progress_waiting_day IS NOT NULL
+            """,
+            (completed_stage, next_at, user_id),
+        )
+        await db.commit()
+
 async def get_all_active_users():
     """Отримати всіх активних користувачів."""
     async with aiosqlite.connect(DATABASE_PATH) as db:
@@ -261,9 +449,15 @@ async def get_stats():
             completed = (await cursor.fetchone())[0]
         async with db.execute("SELECT COUNT(*) FROM users WHERE feedback_sent = 1") as cursor:
             feedback = (await cursor.fetchone())[0]
+        async with db.execute("""
+            SELECT COUNT(*) FROM users
+            WHERE course_completed_at IS NOT NULL AND next_step_selected_at IS NULL
+        """) as cursor:
+            without_next_step = (await cursor.fetchone())[0]
         return {
             "total_users": total,
             "active_users": active,
             "completed_course": completed,
             "feedback_received": feedback,
+            "without_next_step": without_next_step,
         }

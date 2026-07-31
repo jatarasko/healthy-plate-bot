@@ -13,7 +13,13 @@ from aiogram.client.default import DefaultBotProperties
 
 from config import BOT_TOKEN, DATABASE_PATH
 from database import init_db
-from scheduler import init_scheduler, stop_scheduler, recovery_check
+from scheduler import (
+    init_scheduler,
+    stop_scheduler,
+    recovery_check,
+    schedule_completion_checks,
+    process_course_completions,
+)
 from handlers.start import router as start_router
 from handlers.course import router as course_router
 from handlers import admin as admin_handlers  # Адмін-команди
@@ -60,6 +66,8 @@ async def main():
         token=BOT_TOKEN,
         default=DefaultBotProperties(parse_mode=ParseMode.HTML),
     )
+    schedule_completion_checks(bot)
+    await process_course_completions(bot)
     dp = Dispatcher()
     dp.message.outer_middleware(CourseAccessMiddleware())
     dp.callback_query.outer_middleware(CourseAccessMiddleware())

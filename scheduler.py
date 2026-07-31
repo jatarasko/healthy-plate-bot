@@ -2,6 +2,7 @@
 Планувальник — відправка днів курсу з recovery-логікою.
 """
 import asyncio
+import html
 import logging
 import os
 from datetime import datetime, timedelta, timezone
@@ -10,6 +11,7 @@ import zoneinfo
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.date import DateTrigger
+from apscheduler.triggers.interval import IntervalTrigger
 
 from aiogram import Bot
 from aiogram.types import FSInputFile
@@ -21,10 +23,20 @@ from database import (
     set_sending_status,
     get_users_for_recovery,
     has_course_access,
-    update_user_day
+    update_user_day,
+    mark_course_completed,
+    mark_completion_notified,
+    get_unnotified_completions,
+    get_due_completion_followups,
+    advance_completion_followup,
+    set_course_progress_waiting,
+    clear_course_progress_waiting,
+    get_due_progress_reminders,
+    advance_progress_reminder,
 )
 from content.course import get_day_blocks, IMAGES
-from bot_utils.keyboards import feedback_keyboard, next_button
+from bot_utils.keyboards import feedback_keyboard, next_button, cta_keyboard
+from config import ADMIN_ID
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +58,18 @@ def init_scheduler():
 def stop_scheduler():
     """Зупинити планувальник."""
     scheduler.shutdown()
+
+
+def schedule_completion_checks(bot: Bot):
+    """Регулярно перевіряти нагадування випускникам і активним учасникам."""
+    scheduler.add_job(
+        process_course_completions,
+        trigger=IntervalTrigger(minutes=15),
+        args=[bot],
+        id="course_completion_followups",
+        replace_existing=True,
+        max_instances=1,
+    )
 
 
 async def send_day(bot: Bot, user_id: int, day: int):
@@ -79,6 +103,8 @@ async def send_block(bot: Bot, user_id: int, day: int, block_idx: int):
     image_key = block.get("image")
 
     try:
+        # Будь-який новий блок означає, що попередню паузу подолано.
+        await clear_course_progress_waiting(user_id)
         for msg in messages:
             try:
                 await bot.send_message(
@@ -118,6 +144,7 @@ async def send_block(bot: Bot, user_id: int, day: int, block_idx: int):
                 text="Готовий(-а) продовжити?",
                 reply_markup=next_button(day, block_idx + 1),
             )
+            await set_course_progress_waiting(user_id, day, block_idx + 1)
             # Скидаємо статус sending, чекаємо на натискання "Далі"
             await set_sending_status(user_id, 'idle')
             return
@@ -135,7 +162,18 @@ async def send_block(bot: Bot, user_id: int, day: int, block_idx: int):
             return
 
         # Курс завершено (день 5)
+        await mark_course_completed(user_id)
+        await notify_admin_course_completed(bot, user_id)
         try:
+            await bot.send_message(
+                chat_id=user_id,
+                text=(
+                    "🎉 <b>Вітаю! Ти завершив(-ла) курс «Здорова Тарілка».</b>\n\n"
+                    "Залиш відгук і забери бонус нижче. А якщо захочеш рухатись "
+                    "далі — я нагадаю про доступні варіанти завтра."
+                ),
+                parse_mode="HTML",
+            )
             await bot.send_message(
                 chat_id=user_id,
                 text="📝 Залиш відгук про курс — і отримай PDF «9 фішок харчування для схуднення» у подяку!",
@@ -147,6 +185,167 @@ async def send_block(bot: Bot, user_id: int, day: int, block_idx: int):
     except Exception as e:
         logger.error(f"Критична помилка при відправці дня {day} для user {user_id}: {e}")
         # Статус 'sending' залишається, але Recovery його скине через 10 хв
+
+
+async def notify_admin_course_completed(bot: Bot, user_id: int) -> bool:
+    """Повідомити адміністратора про завершення незалежно від натискання CTA."""
+    if not ADMIN_ID:
+        logger.error("ADMIN_ID не налаштовано; завершення user %s не надіслано", user_id)
+        return False
+
+    from database import get_user
+
+    user = await get_user(user_id)
+    if not user or user.get("completion_notified_at"):
+        return bool(user)
+    full_name = html.escape(" ".join(
+        part for part in (user.get("first_name"), user.get("last_name")) if part
+    ) or "Без імені")
+    username = html.escape(f"@{user['username']}") if user.get("username") else "не вказано"
+    try:
+        await bot.send_message(
+            ADMIN_ID,
+            "🎓 <b>Учасник завершив курс «Здорова Тарілка»</b>\n\n"
+            f"Користувач: <a href=\"tg://user?id={user_id}\">{full_name}</a>\n"
+            f"Username: {username}\n"
+            f"Telegram ID: <code>{user_id}</code>\n\n"
+            "Наступний крок ще не обрано. Бот автоматично нагадає учаснику "
+            "через 1 і 3 дні.",
+            parse_mode="HTML",
+        )
+        await mark_completion_notified(user_id)
+        return True
+    except Exception:
+        logger.exception("Не вдалося повідомити про завершення user %s", user_id)
+        return False
+
+
+async def process_course_completions(bot: Bot):
+    """Повторити адмін-сповіщення і надіслати належні follow-up повідомлення."""
+    for user in await get_unnotified_completions():
+        await notify_admin_course_completed(bot, user["user_id"])
+
+    for user in await get_due_completion_followups():
+        user_id = user["user_id"]
+        stage = int(user.get("followup_stage") or 0) + 1
+        if stage == 3:
+            if await notify_admin_no_next_step(bot, user):
+                await advance_completion_followup(user_id, stage)
+            continue
+        if stage == 1:
+            text = (
+                "🌿 <b>Як твої справи після курсу?</b>\n\n"
+                "Щоб знання перетворились на звичку, обери формат, який найкраще "
+                "підтримає тебе далі 👇"
+            )
+        else:
+            text = (
+                "💛 <b>Невелике нагадування про наступний крок</b>\n\n"
+                "Якщо складно визначитись, почни з консультації: розберемо твою "
+                "ситуацію та підберемо доречний формат без зайвих зобов’язань 👇"
+            )
+        try:
+            await bot.send_message(
+                user_id,
+                text,
+                reply_markup=cta_keyboard(),
+                parse_mode="HTML",
+            )
+            await advance_completion_followup(user_id, stage)
+        except Exception:
+            logger.exception("Не вдалося надіслати follow-up %s user %s", stage, user_id)
+
+    await process_progress_reminders(bot)
+
+
+async def process_progress_reminders(bot: Bot):
+    """Нагадати про незавершений блок і ескалювати тривалу паузу адміну."""
+    for user in await get_due_progress_reminders():
+        user_id = user["user_id"]
+        stage = int(user.get("progress_reminder_stage") or 0) + 1
+        if stage == 3:
+            if await notify_admin_progress_stalled(bot, user):
+                await advance_progress_reminder(user_id, stage)
+            continue
+
+        if stage == 1:
+            text = (
+                "👋 <b>Продовжимо курс?</b>\n\n"
+                "Твій наступний короткий блок уже чекає. Натисни «Далі» — "
+                "це займе лише кілька хвилин."
+            )
+        else:
+            text = (
+                "🌿 <b>Не втрачай свій прогрес</b>\n\n"
+                "Навіть маленький крок важливий. Повернись до курсу з того місця, "
+                "де зупинився(-лась) 👇"
+            )
+        try:
+            await bot.send_message(
+                user_id,
+                text,
+                reply_markup=next_button(
+                    int(user["progress_waiting_day"]),
+                    int(user["progress_waiting_block"]),
+                ),
+                parse_mode="HTML",
+            )
+            await advance_progress_reminder(user_id, stage)
+        except Exception:
+            logger.exception("Не вдалося нагадати про прогрес user %s", user_id)
+
+
+async def notify_admin_progress_stalled(bot: Bot, user: dict) -> bool:
+    """Повідомити адміністратора після двох невдалих нагадувань."""
+    if not ADMIN_ID:
+        return False
+    user_id = user["user_id"]
+    full_name = html.escape(" ".join(
+        part for part in (user.get("first_name"), user.get("last_name")) if part
+    ) or "Без імені")
+    username = html.escape(f"@{user['username']}") if user.get("username") else "не вказано"
+    try:
+        await bot.send_message(
+            ADMIN_ID,
+            "⏸ <b>Учасник зупинив проходження курсу</b>\n\n"
+            f"Користувач: <a href=\"tg://user?id={user_id}\">{full_name}</a>\n"
+            f"Username: {username}\n"
+            f"Telegram ID: <code>{user_id}</code>\n"
+            f"Зупинився на дні {user['progress_waiting_day']}.\n\n"
+            "Бот уже надіслав два нагадування. За потреби можна написати "
+            "учаснику особисто.",
+            parse_mode="HTML",
+        )
+        return True
+    except Exception:
+        logger.exception("Не вдалося повідомити про зупинку user %s", user_id)
+        return False
+
+
+async def notify_admin_no_next_step(bot: Bot, user: dict) -> bool:
+    """Повідомити, що після серії нагадувань випускник нічого не обрав."""
+    if not ADMIN_ID:
+        return False
+    user_id = user["user_id"]
+    full_name = html.escape(" ".join(
+        part for part in (user.get("first_name"), user.get("last_name")) if part
+    ) or "Без імені")
+    username = html.escape(f"@{user['username']}") if user.get("username") else "не вказано"
+    try:
+        await bot.send_message(
+            ADMIN_ID,
+            "⚠️ <b>Випускник не обрав наступний крок</b>\n\n"
+            f"Користувач: <a href=\"tg://user?id={user_id}\">{full_name}</a>\n"
+            f"Username: {username}\n"
+            f"Telegram ID: <code>{user_id}</code>\n\n"
+            "Бот уже надіслав два нагадування. Можна написати учаснику особисто "
+            "та запропонувати консультацію або відповідний продукт.",
+            parse_mode="HTML",
+        )
+        return True
+    except Exception:
+        logger.exception("Не вдалося повідомити про відсутність next step user %s", user_id)
+        return False
 
 
 def schedule_next_day(bot: Bot, user_id: int, next_day: int):

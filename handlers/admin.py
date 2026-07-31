@@ -2,6 +2,7 @@
 Адміністративні команди для адміністратора (Taras).
 Включає /recover для ручного запуску recovery.
 """
+import html
 import logging
 from aiogram import Bot, Dispatcher
 from aiogram.types import Message
@@ -133,5 +134,29 @@ def register_admin_handlers(dp: Dispatcher):
             f"Активні: {stats['active_users']}\n"
             f"Завершили курс: {stats['completed_course']}\n"
             f"Фідбек отримано: {stats['feedback_received']}\n"
+            f"Без наступного кроку: {stats['without_next_step']}\n"
         )
         await message.answer(report, parse_mode="HTML")
+
+    @dp.message(Command("followups"))
+    async def followups_command(message: Message):
+        """Показати випускників, які ще не обрали наступний крок."""
+        if message.from_user.id != ADMIN_ID:
+            return
+        from database import get_completed_without_next_step
+
+        users = await get_completed_without_next_step()
+        if not users:
+            await message.answer("✅ Усі випускники обрали наступний крок.")
+            return
+        lines = ["🎓 <b>Завершили курс без наступного кроку</b>\n"]
+        for user in users:
+            name = html.escape(" ".join(
+                part for part in (user.get("first_name"), user.get("last_name")) if part
+            ) or "Без імені")
+            username = html.escape(f"@{user['username']}") if user.get("username") else "без username"
+            lines.append(
+                f"• <a href=\"tg://user?id={user['user_id']}\">{name}</a> — "
+                f"{username}, ID <code>{user['user_id']}</code>"
+            )
+        await message.answer("\n".join(lines), parse_mode="HTML")
