@@ -14,14 +14,13 @@ if not BOT_TOKEN:
 # For local SQLite: set DATABASE_PATH or use default
 DATABASE_URL = os.getenv("DATABASE_URL")
 
-# Railway Volume path (persistent storage)
-# On Railway, use /data/healthy_plate.db if volume is mounted at /data
-# Locally, use relative path
+# Railway Volume path (persistent storage).
+# У production Volume змонтовано як директорію /healthy_plate.db.
 if os.getenv("RAILWAY_SERVICE_ID"):
-    # Railway environment
-    DATABASE_PATH = os.getenv("DATABASE_PATH", "/data/healthy_plate.db")
+    # Не використовуємо застарілий DATABASE_PATH=/data/...: ця директорія
+    # належить контейнеру й очищається під час кожного деплою.
+    DATABASE_PATH = "/healthy_plate.db/healthy_plate.db"
 else:
-    # Local environment
     DATABASE_PATH = os.getenv("DATABASE_PATH", "bot_database.db")
 
 # ID адміністратора (Taras) — для сповіщень

@@ -21,7 +21,7 @@
 2. Оберіть "Database" -> "PostgreSQL".
 3. Після створення перейдіть у "Variables" вкладку.
 4. Скопіюйте `DATABASE_URL` (він з'явиться автоматично).
-5. **MVP:** Якщо не хочете налаштовувати PostgreSQL зараз, пропустіть цей крок. Бот використовуватиме SQLite (`data/bot.db`).
+5. **MVP:** Якщо не хочете налаштовувати PostgreSQL зараз, пропустіть цей крок. Бот використовуватиме SQLite у постійному Railway Volume (`/healthy_plate.db/healthy_plate.db`).
 
 ## Крок 4: Змінні середовища (Environment Variables)
 1. Перейдіть у "Variables" вашого проєкту.
@@ -34,6 +34,9 @@
    - `TIMEZONE` — `Europe/Kyiv`.
    - `COURSE_START_MODE` — `manual`.
    - `PAYMENT_ENABLED` — `false`.
+
+Не додавайте `DATABASE_PATH` до Railway Variables: у production бот автоматично
+використовує змонтований Volume `/healthy_plate.db`.
 
 ## Крок 5: Деплой
 1. Railway автоматично розпочне деплой після додавання змінних.
