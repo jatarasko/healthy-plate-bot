@@ -160,3 +160,90 @@ def register_admin_handlers(dp: Dispatcher):
                 f"{username}, ID <code>{user['user_id']}</code>"
             )
         await message.answer("\n".join(lines), parse_mode="HTML")
+
+    @dp.message(Command("feedback"))
+    async def feedback_command(message: Message):
+        """Останні анкети або повний текст конкретної анкети: /feedback ID."""
+        if message.from_user.id != ADMIN_ID:
+            return
+        from database import get_feedback_submission, get_recent_feedback
+
+        parts = (message.text or "").split()
+        if len(parts) == 2 and parts[1].isdigit():
+            submission = await get_feedback_submission(int(parts[1]))
+            if not submission:
+                await message.answer("Анкету не знайдено.")
+                return
+            name = html.escape(" ".join(
+                part for part in (submission.get("first_name"), submission.get("last_name")) if part
+            ) or "Без імені")
+            lines = [
+                f"📝 <b>Анкета #{submission['id']}</b>",
+                f"Учасник: <a href=\"tg://user?id={submission['user_id']}\">{name}</a>",
+                f"Статус: {html.escape(submission['status'])}",
+                "",
+            ]
+            for answer in submission["answers"]:
+                lines.extend([
+                    f"<b>{answer['question_index'] + 1}. {html.escape(answer['question_key'])}</b>",
+                    html.escape(answer["answer"]),
+                    "",
+                ])
+            await message.answer("\n".join(lines), parse_mode="HTML")
+            return
+
+        submissions = await get_recent_feedback()
+        if not submissions:
+            await message.answer("Відгуків ще немає.")
+            return
+        lines = ["📝 <b>Останні анкети</b>\n"]
+        for item in submissions:
+            name = html.escape(" ".join(
+                part for part in (item.get("first_name"), item.get("last_name")) if part
+            ) or "Без імені")
+            marker = "✅" if item["status"] == "completed" else "⏳"
+            lines.append(
+                f"{marker} <code>#{item['id']}</code> {name} — {item['answer_count']}/6; "
+                f"/feedback {item['id']}"
+            )
+        await message.answer("\n".join(lines), parse_mode="HTML")
+
+    @dp.message(Command("completions"))
+    async def completions_command(message: Message):
+        if message.from_user.id != ADMIN_ID:
+            return
+        from database import get_recent_completions
+
+        users = await get_recent_completions()
+        if not users:
+            await message.answer("Завершень курсу ще немає.")
+            return
+        lines = ["🎓 <b>Останні завершення</b>\n"]
+        for user in users:
+            name = html.escape(" ".join(
+                part for part in (user.get("first_name"), user.get("last_name")) if part
+            ) or "Без імені")
+            next_step = html.escape(user.get("next_step") or "ще не обрано")
+            lines.append(
+                f"• <a href=\"tg://user?id={user['user_id']}\">{name}</a> — {next_step}"
+            )
+        await message.answer("\n".join(lines), parse_mode="HTML")
+
+    @dp.message(Command("funnel"))
+    async def funnel_command(message: Message):
+        if message.from_user.id != ADMIN_ID:
+            return
+        from database import get_funnel_stats
+
+        stats = await get_funnel_stats()
+        events = stats["events"]
+        await message.answer(
+            "📈 <b>Воронка після курсу</b>\n\n"
+            f"Завершили: {stats['completed']}\n"
+            f"Почали анкету: {stats['feedback_started']}\n"
+            f"Завершили анкету: {stats['feedback_completed']}\n"
+            f"Побачили пропозицію: {events.get('offer_shown', 0)}\n"
+            f"Обрали пропозицію: {events.get('offer_clicked', 0)}\n"
+            f"Мають наступний крок: {stats['next_step_selected']}",
+            parse_mode="HTML",
+        )

@@ -33,10 +33,13 @@ from database import (
     clear_course_progress_waiting,
     get_due_progress_reminders,
     advance_progress_reminder,
+    record_course_event,
+    get_unnotified_feedback,
 )
 from content.course import get_day_blocks, IMAGES
 from bot_utils.keyboards import feedback_keyboard, next_button, cta_keyboard
 from config import ADMIN_ID
+from admin_notifications import send_admin_message
 
 logger = logging.getLogger(__name__)
 
@@ -162,15 +165,17 @@ async def send_block(bot: Bot, user_id: int, day: int, block_idx: int):
             return
 
         # Курс завершено (день 5)
-        await mark_course_completed(user_id)
+        newly_completed = await mark_course_completed(user_id)
+        if newly_completed:
+            await record_course_event(user_id, "course_completed")
         await notify_admin_course_completed(bot, user_id)
         try:
             await bot.send_message(
                 chat_id=user_id,
                 text=(
                     "🎉 <b>Вітаю! Ти завершив(-ла) курс «Здорова Тарілка».</b>\n\n"
-                    "Залиш відгук і забери бонус нижче. А якщо захочеш рухатись "
-                    "далі — я нагадаю про доступні варіанти завтра."
+                    "Залиш короткий відгук і забери бонус. А наступний крок можна "
+                    "обрати вже зараз — незалежно від анкети."
                 ),
                 parse_mode="HTML",
             )
@@ -179,6 +184,16 @@ async def send_block(bot: Bot, user_id: int, day: int, block_idx: int):
                 text="📝 Залиш відгук про курс — і отримай PDF «9 фішок харчування для схуднення» у подяку!",
                 reply_markup=feedback_keyboard(),
             )
+            await bot.send_message(
+                chat_id=user_id,
+                text=(
+                    "🎯 <b>Що зараз найбільше заважає рухатись далі?</b>\n\n"
+                    "Обери свою ситуацію — бот покаже рішення, результат і наступну дію."
+                ),
+                reply_markup=cta_keyboard(),
+                parse_mode="HTML",
+            )
+            await record_course_event(user_id, "offer_shown", {"stage": "completion"})
         except Exception as e:
             logger.error(f"Помилка відправки фідбек-кнопки: {e}")
 
@@ -203,16 +218,16 @@ async def notify_admin_course_completed(bot: Bot, user_id: int) -> bool:
     ) or "Без імені")
     username = html.escape(f"@{user['username']}") if user.get("username") else "не вказано"
     try:
-        await bot.send_message(
-            ADMIN_ID,
+        notified = await send_admin_message(
             "🎓 <b>Учасник завершив курс «Здорова Тарілка»</b>\n\n"
             f"Користувач: <a href=\"tg://user?id={user_id}\">{full_name}</a>\n"
             f"Username: {username}\n"
             f"Telegram ID: <code>{user_id}</code>\n\n"
             "Наступний крок ще не обрано. Бот автоматично нагадає учаснику "
             "через 1 і 3 дні.",
-            parse_mode="HTML",
         )
+        if not notified:
+            return False
         await mark_completion_notified(user_id)
         return True
     except Exception:
@@ -222,6 +237,13 @@ async def notify_admin_course_completed(bot: Bot, user_id: int) -> bool:
 
 async def process_course_completions(bot: Bot):
     """Повторити адмін-сповіщення і надіслати належні follow-up повідомлення."""
+    # Якщо Telegram був тимчасово недоступний у момент завершення анкети,
+    # повторюємо адмін-сповіщення без втрати вже збережених відповідей.
+    from handlers.course import _notify_admin_feedback
+
+    for submission_id in await get_unnotified_feedback():
+        await _notify_admin_feedback(bot, submission_id)
+
     for user in await get_unnotified_completions():
         await notify_admin_course_completed(bot, user["user_id"])
 
@@ -251,6 +273,7 @@ async def process_course_completions(bot: Bot):
                 reply_markup=cta_keyboard(),
                 parse_mode="HTML",
             )
+            await record_course_event(user_id, "offer_shown", {"stage": f"followup_{stage}"})
             await advance_completion_followup(user_id, stage)
         except Exception:
             logger.exception("Не вдалося надіслати follow-up %s user %s", stage, user_id)
@@ -305,8 +328,7 @@ async def notify_admin_progress_stalled(bot: Bot, user: dict) -> bool:
     ) or "Без імені")
     username = html.escape(f"@{user['username']}") if user.get("username") else "не вказано"
     try:
-        await bot.send_message(
-            ADMIN_ID,
+        return await send_admin_message(
             "⏸ <b>Учасник зупинив проходження курсу</b>\n\n"
             f"Користувач: <a href=\"tg://user?id={user_id}\">{full_name}</a>\n"
             f"Username: {username}\n"
@@ -314,9 +336,7 @@ async def notify_admin_progress_stalled(bot: Bot, user: dict) -> bool:
             f"Зупинився на дні {user['progress_waiting_day']}.\n\n"
             "Бот уже надіслав два нагадування. За потреби можна написати "
             "учаснику особисто.",
-            parse_mode="HTML",
         )
-        return True
     except Exception:
         logger.exception("Не вдалося повідомити про зупинку user %s", user_id)
         return False
@@ -332,17 +352,14 @@ async def notify_admin_no_next_step(bot: Bot, user: dict) -> bool:
     ) or "Без імені")
     username = html.escape(f"@{user['username']}") if user.get("username") else "не вказано"
     try:
-        await bot.send_message(
-            ADMIN_ID,
+        return await send_admin_message(
             "⚠️ <b>Випускник не обрав наступний крок</b>\n\n"
             f"Користувач: <a href=\"tg://user?id={user_id}\">{full_name}</a>\n"
             f"Username: {username}\n"
             f"Telegram ID: <code>{user_id}</code>\n\n"
             "Бот уже надіслав два нагадування. Можна написати учаснику особисто "
             "та запропонувати консультацію або відповідний продукт.",
-            parse_mode="HTML",
         )
-        return True
     except Exception:
         logger.exception("Не вдалося повідомити про відсутність next step user %s", user_id)
         return False

@@ -12,8 +12,8 @@ from access_token import validate_access_token
 from config import ACCESS_TOKEN_SECRET
 from database import grant_course_access, has_course_access, register_user, get_user
 from bot_utils.keyboards import start_course_keyboard
-from states import CourseState, FeedbackState
-from content.course import WELCOME_MSG, FEEDBACK_QUESTIONS
+from states import CourseState
+from content.course import WELCOME_MSG
 from scheduler import schedule_next_day, send_block
 
 router = Router()
@@ -142,18 +142,6 @@ async def schedule_day_handler(callback: CallbackQuery):
     except Exception as e:
         logger.error(f"Помилка планування дня {day} для user {user_id}: {e}")
         await callback.answer("❌ Помилка. Спробуй ще раз або напиши /start")
-
-
-@router.callback_query(F.data == "start_feedback")
-async def start_feedback(callback: CallbackQuery, state: FSMContext):
-    """Почати заповнення фідбек-анкети."""
-    await state.set_state(FeedbackState.answering)
-    await state.update_data(question=0, answers=[])
-    await callback.answer("Починаємо!")
-    await callback.message.answer(
-        FEEDBACK_QUESTIONS[0],
-        parse_mode="HTML",
-    )
 
 
 @router.callback_query(F.data == "pause_course")

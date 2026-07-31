@@ -1,7 +1,10 @@
 """
 Робота з базою даних SQLite (з підтримкою змінних середовища та recovery).
 """
+from __future__ import annotations
+
 import aiosqlite
+import json
 import logging
 from pathlib import Path
 from datetime import datetime, timedelta, timezone
@@ -97,6 +100,47 @@ async def init_db():
                 granted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS feedback_submissions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                survey_version INTEGER NOT NULL DEFAULT 2,
+                status TEXT NOT NULL DEFAULT 'started',
+                started_at TEXT NOT NULL,
+                completed_at TEXT,
+                admin_notified_at TEXT,
+                FOREIGN KEY (user_id) REFERENCES users(user_id)
+            )
+        """)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS feedback_answers (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                submission_id INTEGER NOT NULL,
+                question_index INTEGER NOT NULL,
+                question_key TEXT NOT NULL,
+                question_text TEXT NOT NULL,
+                answer TEXT NOT NULL,
+                answered_at TEXT NOT NULL,
+                UNIQUE(submission_id, question_index),
+                FOREIGN KEY (submission_id) REFERENCES feedback_submissions(id)
+            )
+        """)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS course_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                event_type TEXT NOT NULL,
+                details TEXT,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY (user_id) REFERENCES users(user_id)
+            )
+        """)
+        await db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_feedback_user ON feedback_submissions(user_id, id)"
+        )
+        await db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_course_events_type ON course_events(event_type, created_at)"
+        )
         await db.commit()
         logger.info(f"✅ База даних ініціалізована. Шлях: {DATABASE_PATH}")
 
@@ -230,6 +274,187 @@ async def mark_feedback_sent(user_id: int):
     async with aiosqlite.connect(DATABASE_PATH) as db:
         await db.execute("UPDATE users SET feedback_sent = 1 WHERE user_id = ?", (user_id,))
         await db.commit()
+
+
+async def record_course_event(user_id: int, event_type: str, details: dict | None = None) -> None:
+    """Append-only funnel event. It never alters course progress."""
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        await db.execute(
+            "INSERT INTO course_events (user_id, event_type, details, created_at) VALUES (?, ?, ?, ?)",
+            (
+                user_id,
+                event_type,
+                json.dumps(details, ensure_ascii=False) if details else None,
+                datetime.now(timezone.utc).isoformat(),
+            ),
+        )
+        await db.commit()
+
+
+async def get_or_create_feedback_submission(user_id: int, survey_version: int = 2):
+    """Resume an unfinished survey, or create a new durable submission."""
+    now = datetime.now(timezone.utc).isoformat()
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            """SELECT * FROM feedback_submissions
+               WHERE user_id = ? AND survey_version = ?
+               ORDER BY id DESC LIMIT 1""",
+            (user_id, survey_version),
+        ) as cursor:
+            row = await cursor.fetchone()
+        if row:
+            submission = dict(row)
+        else:
+            cursor = await db.execute(
+                """INSERT INTO feedback_submissions
+                   (user_id, survey_version, status, started_at)
+                   VALUES (?, ?, 'started', ?)""",
+                (user_id, survey_version, now),
+            )
+            await db.commit()
+            submission = {
+                "id": cursor.lastrowid,
+                "user_id": user_id,
+                "survey_version": survey_version,
+                "status": "started",
+                "started_at": now,
+                "completed_at": None,
+                "admin_notified_at": None,
+            }
+        async with db.execute(
+            "SELECT question_index FROM feedback_answers WHERE submission_id = ? ORDER BY question_index",
+            (submission["id"],),
+        ) as cursor:
+            submission["answered_indexes"] = [row[0] for row in await cursor.fetchall()]
+        return submission
+
+
+async def save_feedback_answer(
+    submission_id: int,
+    question_index: int,
+    question_key: str,
+    question_text: str,
+    answer: str,
+) -> None:
+    """Persist each answer immediately so a restart cannot erase the survey."""
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        await db.execute(
+            """INSERT INTO feedback_answers
+               (submission_id, question_index, question_key, question_text, answer, answered_at)
+               VALUES (?, ?, ?, ?, ?, ?)
+               ON CONFLICT(submission_id, question_index) DO UPDATE SET
+                   answer = excluded.answer, answered_at = excluded.answered_at""",
+            (
+                submission_id,
+                question_index,
+                question_key,
+                question_text,
+                answer.strip(),
+                datetime.now(timezone.utc).isoformat(),
+            ),
+        )
+        await db.commit()
+
+
+async def complete_feedback_submission(submission_id: int, user_id: int) -> None:
+    now = datetime.now(timezone.utc).isoformat()
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        await db.execute(
+            """UPDATE feedback_submissions
+               SET status = 'completed', completed_at = COALESCE(completed_at, ?)
+               WHERE id = ?""",
+            (now, submission_id),
+        )
+        await db.execute("UPDATE users SET feedback_sent = 1 WHERE user_id = ?", (user_id,))
+        await db.commit()
+
+
+async def get_feedback_submission(submission_id: int):
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            """SELECT s.*, u.username, u.first_name, u.last_name
+               FROM feedback_submissions s JOIN users u ON u.user_id = s.user_id
+               WHERE s.id = ?""",
+            (submission_id,),
+        ) as cursor:
+            row = await cursor.fetchone()
+        if not row:
+            return None
+        result = dict(row)
+        async with db.execute(
+            """SELECT question_index, question_key, question_text, answer, answered_at
+               FROM feedback_answers WHERE submission_id = ? ORDER BY question_index""",
+            (submission_id,),
+        ) as cursor:
+            result["answers"] = [dict(answer) for answer in await cursor.fetchall()]
+        return result
+
+
+async def mark_feedback_admin_notified(submission_id: int) -> None:
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        await db.execute(
+            "UPDATE feedback_submissions SET admin_notified_at = ? WHERE id = ?",
+            (datetime.now(timezone.utc).isoformat(), submission_id),
+        )
+        await db.commit()
+
+
+async def get_recent_feedback(limit: int = 10):
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            """SELECT s.id, s.user_id, s.status, s.started_at, s.completed_at,
+                      u.username, u.first_name, u.last_name,
+                      COUNT(a.id) AS answer_count
+               FROM feedback_submissions s
+               JOIN users u ON u.user_id = s.user_id
+               LEFT JOIN feedback_answers a ON a.submission_id = s.id
+               GROUP BY s.id ORDER BY s.id DESC LIMIT ?""",
+            (limit,),
+        ) as cursor:
+            return [dict(row) for row in await cursor.fetchall()]
+
+
+async def get_unnotified_feedback(limit: int = 20):
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        async with db.execute(
+            """SELECT id FROM feedback_submissions
+               WHERE status = 'completed' AND admin_notified_at IS NULL
+               ORDER BY completed_at LIMIT ?""",
+            (limit,),
+        ) as cursor:
+            return [row[0] for row in await cursor.fetchall()]
+
+
+async def get_recent_completions(limit: int = 20):
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            """SELECT * FROM users WHERE course_completed_at IS NOT NULL
+               ORDER BY course_completed_at DESC LIMIT ?""",
+            (limit,),
+        ) as cursor:
+            return [dict(row) for row in await cursor.fetchall()]
+
+
+async def get_funnel_stats():
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        result = {}
+        for key, query in {
+            "completed": "SELECT COUNT(*) FROM users WHERE course_completed_at IS NOT NULL",
+            "feedback_started": "SELECT COUNT(*) FROM feedback_submissions",
+            "feedback_completed": "SELECT COUNT(*) FROM feedback_submissions WHERE status = 'completed'",
+            "next_step_selected": "SELECT COUNT(*) FROM users WHERE next_step_selected_at IS NOT NULL",
+        }.items():
+            async with db.execute(query) as cursor:
+                result[key] = (await cursor.fetchone())[0]
+        async with db.execute(
+            "SELECT event_type, COUNT(*) FROM course_events GROUP BY event_type"
+        ) as cursor:
+            result["events"] = dict(await cursor.fetchall())
+        return result
 
 
 async def mark_course_completed(user_id: int) -> bool:

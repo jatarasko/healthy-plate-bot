@@ -1,5 +1,7 @@
 """Клавіатури та інлайн-кнопки для бота."""
 
+from __future__ import annotations
+
 from aiogram.types import (
     InlineKeyboardMarkup,
     InlineKeyboardButton,
@@ -46,31 +48,63 @@ def feedback_keyboard() -> InlineKeyboardMarkup:
     ])
 
 
+def feedback_answer_keyboard(question_index: int) -> InlineKeyboardMarkup | None:
+    """Швидкі відповіді там, де шкала зручніша за текст."""
+    if question_index == 0:
+        return InlineKeyboardMarkup(inline_keyboard=[[
+            InlineKeyboardButton(text=str(value), callback_data=f"feedback_answer:0:{value}")
+            for value in range(1, 6)
+        ]])
+    if question_index == 4:
+        options = [
+            ("Легше готувати", "meal_ideas"),
+            ("Більше рухатись", "movement"),
+            ("Тримати режим", "consistency"),
+            ("Особистий план", "personal"),
+        ]
+        return InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text=label, callback_data=f"feedback_answer:4:{value}")]
+            for label, value in options
+        ])
+    if question_index == 5:
+        return InlineKeyboardMarkup(inline_keyboard=[
+            [
+                InlineKeyboardButton(text=str(value), callback_data=f"feedback_answer:5:{value}")
+                for value in range(0, 6)
+            ],
+            [
+                InlineKeyboardButton(text=str(value), callback_data=f"feedback_answer:5:{value}")
+                for value in range(6, 11)
+            ],
+        ])
+    return None
+
+
 def cta_keyboard() -> InlineKeyboardMarkup:
-    """Клавіатура CTA після завершення курсу."""
+    """Діагностична клавіатура: починаємо з проблеми, а не з назви продукту."""
     return InlineKeyboardMarkup(inline_keyboard=[
         [
             InlineKeyboardButton(
-                text="🏃‍♂️ Курс «Рухова активність»",
+                text="🍽 Не знаю, що готувати",
+                callback_data="cta_recipes"
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                text="🏃 Хочу більше рухатись",
                 callback_data="cta_movement"
             )
         ],
         [
             InlineKeyboardButton(
-                text="💬 Консультація з Тарасом",
-                callback_data="cta_consultation"
-            )
-        ],
-        [
-            InlineKeyboardButton(
-                text="📱 Онлайн-супровід",
+                text="🔁 Складно тримати регулярність",
                 callback_data="cta_online"
             )
         ],
         [
             InlineKeyboardButton(
-                text="📖 Набір рецептів + бонуси",
-                callback_data="cta_recipes"
+                text="🎯 Потрібна особиста порада",
+                callback_data="cta_consultation"
             )
         ],
         [
