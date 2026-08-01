@@ -12,7 +12,7 @@ from access_token import validate_access_token
 from config import ACCESS_TOKEN_SECRET
 from database import grant_course_access, has_course_access, register_user, get_user
 from bot_utils.keyboards import start_course_keyboard
-from states import CourseState
+from states import CourseState, FeedbackState
 from content.course import WELCOME_MSG
 from scheduler import schedule_next_day, send_block
 
