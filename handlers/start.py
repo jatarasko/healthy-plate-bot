@@ -10,7 +10,13 @@ from aiogram.fsm.context import FSMContext
 from access import sales_keyboard
 from access_token import validate_access_token
 from config import ACCESS_TOKEN_SECRET
-from database import grant_course_access, has_course_access, register_user, get_user
+from database import (
+    get_user,
+    grant_course_access,
+    has_course_access,
+    record_course_event,
+    register_user,
+)
 from bot_utils.keyboards import start_course_keyboard
 from states import CourseState, FeedbackState
 from content.course import WELCOME_MSG
@@ -35,6 +41,7 @@ async def cmd_start(message: Message):
         )
         if grant:
             await grant_course_access(user.id, grant.fingerprint)
+            await record_course_event(user.id, "access_activated")
             await message.answer("✅ <b>Оплату підтверджено. Доступ до курсу активовано.</b>")
     if not await has_course_access(user.id):
         await message.answer(
@@ -65,6 +72,7 @@ async def start_course(callback: CallbackQuery, state: FSMContext):
     await callback.answer("Курс розпочато! 🎉")
     await state.set_state(CourseState.viewing_day)
     await state.update_data(day=1, block_idx=0)
+    await record_course_event(user_id, "course_started")
 
     if callback.message:
         try:
