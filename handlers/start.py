@@ -17,7 +17,7 @@ from database import (
     record_course_event,
     register_user,
 )
-from bot_utils.keyboards import confirm_start_course_keyboard, start_course_keyboard
+from bot_utils.keyboards import start_course_keyboard
 from states import CourseState, FeedbackState
 from content.course import WELCOME_MSG
 from scheduler import schedule_next_day, send_block
@@ -67,34 +67,8 @@ async def cmd_start(message: Message):
 
 @router.callback_query(F.data == "start_course")
 async def start_course(callback: CallbackQuery, state: FSMContext):
-    """Показати явне підтвердження перед відправкою першого блоку."""
-    await callback.answer()
-    if not await has_course_access(callback.from_user.id):
-        await callback.message.answer("Доступ до курсу не активовано.")
-        return
-    await callback.message.answer(
-        "Матеріали Дня 1 надійдуть одразу. Почати курс зараз?",
-        reply_markup=confirm_start_course_keyboard(),
-    )
-
-
-@router.callback_query(F.data == "cancel_start_course")
-async def cancel_start_course(callback: CallbackQuery):
-    await callback.answer("Курс не розпочато.")
-    if callback.message:
-        await callback.message.edit_reply_markup(reply_markup=None)
-        await callback.message.answer(
-            "Добре, почнемо пізніше. Коли будете готові — натисніть /start."
-        )
-
-
-@router.callback_query(F.data == "confirm_start_course")
-async def confirm_start_course(callback: CallbackQuery, state: FSMContext):
-    """Явне підтвердження — лише тепер відправляємо перший блок."""
+    """Користувач натиснув 'Почати курс' — відправляємо перший блок."""
     user_id = callback.from_user.id
-    if not await has_course_access(user_id):
-        await callback.answer("Доступ до курсу не активовано.", show_alert=True)
-        return
     await callback.answer("Курс розпочато! 🎉")
     await state.set_state(CourseState.viewing_day)
     await state.update_data(day=1, block_idx=0)
