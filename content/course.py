@@ -13,6 +13,8 @@
 # Відносні шляхи до зображень у репозиторії
 IMAGES = {
     "plate": "assets/images/day1_plate.jpeg",
+    "hand_protein": "assets/images/day2_hand_protein.png",
+    "hand_carbs": "assets/images/day3_hand_carbs.png",
     "hand_fat": "assets/images/day4_hand_fat.png",
     "hand_meat_fish": "assets/images/day2_hand_meat_fish.png",
     "hand_veggies": "assets/images/day3_hand_veggies.png",
@@ -230,6 +232,7 @@ DAY_2 = [
 
 💡 Пам'ятай: білок — це не про «качалку», а про якість життя.""",
         ],
+        "image": "hand_protein",
     },
 ]
 
@@ -314,6 +317,7 @@ DAY_3 = [
 Обери темний, з насінням, або хліб із цільного зерна.
 2 скибки = чудова порція вуглеводів до сніданку чи обіду.""",
         ],
+        "image": "hand_carbs",
     },
     # Блок 4: Приховані цукри + міфи + завдання + підсумок + фото долоня (солодке)
     {
