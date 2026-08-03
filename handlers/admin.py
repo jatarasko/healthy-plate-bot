@@ -238,7 +238,9 @@ def register_admin_handlers(dp: Dispatcher):
         stats = await get_funnel_stats()
         events = stats["events"]
         await message.answer(
-            "📈 <b>Воронка після курсу</b>\n\n"
+            "📈 <b>Воронка курсу</b>\n\n"
+            f"Активували доступ: {events.get('access_activated', 0)}\n"
+            f"Почали курс: {events.get('course_started', 0)}\n"
             f"Завершили: {stats['completed']}\n"
             f"Почали анкету: {stats['feedback_started']}\n"
             f"Завершили анкету: {stats['feedback_completed']}\n"
