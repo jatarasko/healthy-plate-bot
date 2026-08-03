@@ -22,6 +22,14 @@ def start_course_keyboard() -> InlineKeyboardMarkup:
     ])
 
 
+def confirm_start_course_keyboard() -> InlineKeyboardMarkup:
+    """Окреме підтвердження, щоб курс не стартував випадковим натисканням."""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="Так, почати День 1", callback_data="confirm_start_course")],
+        [InlineKeyboardButton(text="Не зараз", callback_data="cancel_start_course")],
+    ])
+
+
 def next_day_keyboard(day: int) -> InlineKeyboardMarkup:
     """Кнопка переходу до наступного дня з текстом-підказкою."""
     prompts = {
