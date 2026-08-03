@@ -1,6 +1,8 @@
 """
 Планувальник — відправка днів курсу з recovery-логікою.
 """
+from __future__ import annotations
+
 import asyncio
 import html
 import logging
@@ -21,6 +23,7 @@ from database import (
     get_users_for_day, 
     update_user_after_send,
     set_sending_status,
+    claim_sending_status,
     get_users_for_recovery,
     has_course_access,
     update_user_day,
@@ -35,6 +38,9 @@ from database import (
     advance_progress_reminder,
     record_course_event,
     get_unnotified_feedback,
+    get_scheduled_course_days,
+    claim_scheduled_course_day,
+    set_next_send_at,
 )
 from content.course import get_day_blocks, IMAGES
 from bot_utils.keyboards import feedback_keyboard, next_button, cta_keyboard
@@ -73,6 +79,22 @@ def schedule_completion_checks(bot: Bot):
         replace_existing=True,
         max_instances=1,
     )
+    scheduler.add_job(
+        process_due_course_days,
+        trigger=IntervalTrigger(minutes=5),
+        args=[bot],
+        id="due_course_days",
+        replace_existing=True,
+        max_instances=1,
+    )
+    scheduler.add_job(
+        recovery_check,
+        trigger=IntervalTrigger(minutes=15),
+        args=[bot],
+        id="course_delivery_recovery",
+        replace_existing=True,
+        max_instances=1,
+    )
 
 
 async def send_day(bot: Bot, user_id: int, day: int):
@@ -97,8 +119,10 @@ async def send_block(bot: Bot, user_id: int, day: int, block_idx: int):
         logger.error(f"Некоректний блок {block_idx} для дня {day}, user {user_id}")
         return
 
-    # Встановлюємо статус 'sending', щоб інші процеси не дублювали
-    await set_sending_status(user_id, 'sending')
+    # Атомарно блокуємо паралельну відправку від подвійного натискання/job.
+    if not await claim_sending_status(user_id):
+        logger.info("Відправка вже виконується: user=%s day=%s block=%s", user_id, day, block_idx)
+        return
     logger.info(f"Користувач {user_id}: початок відправки дня {day}, блок {block_idx}")
 
     block = blocks[block_idx]
@@ -106,8 +130,6 @@ async def send_block(bot: Bot, user_id: int, day: int, block_idx: int):
     image_key = block.get("image")
 
     try:
-        # Будь-який новий блок означає, що попередню паузу подолано.
-        await clear_course_progress_waiting(user_id)
         for msg in messages:
             try:
                 await bot.send_message(
@@ -118,16 +140,16 @@ async def send_block(bot: Bot, user_id: int, day: int, block_idx: int):
                 await asyncio.sleep(0.5)
             except Exception as e:
                 logger.error(f"Помилка відправки повідомлення user {user_id}: {e}")
-                # Якщо впало посеред блоку — статус залишається 'sending' (відновиться при recovery)
+                raise
 
         if image_key:
             image_rel_path = IMAGES.get(image_key, "")
             if not image_rel_path:
-                logger.error(f"Ключ фото {image_key} не знайдено в IMAGES")
+                raise FileNotFoundError(f"Ключ фото {image_key} не знайдено в IMAGES")
             else:
                 image_path = _resolve_asset_path(image_rel_path)
                 if not os.path.exists(image_path):
-                    logger.error(f"Файл фото не існує: {image_rel_path}")
+                    raise FileNotFoundError(f"Файл фото не існує: {image_rel_path}")
                 else:
                     try:
                         logger.info(f"Відправляю фото: {image_rel_path}")
@@ -139,8 +161,10 @@ async def send_block(bot: Bot, user_id: int, day: int, block_idx: int):
                         await asyncio.sleep(0.5)
                     except Exception as e:
                         logger.error(f"Помилка відправки фото {image_key} ({image_rel_path}): {e}")
+                        raise
 
         # Успішно відправили поточний блок
+        await clear_course_progress_waiting(user_id)
         if block_idx < len(blocks) - 1:
             await bot.send_message(
                 chat_id=user_id,
@@ -153,7 +177,12 @@ async def send_block(bot: Bot, user_id: int, day: int, block_idx: int):
             return
 
         # Всі блоки дня відправлено успішно
-        await update_user_after_send(user_id, day)
+        next_run = _next_day_run_time() if day < 5 else None
+        await update_user_after_send(
+            user_id,
+            day,
+            next_send_at=next_run.isoformat() if next_run else None,
+        )
         logger.info(f"Користувач {user_id}: день {day} повністю завершено")
 
         if day < 5:
@@ -161,7 +190,13 @@ async def send_block(bot: Bot, user_id: int, day: int, block_idx: int):
                 chat_id=user_id,
                 text=f"✅ День {day} завершено!\n\n📅 Продовжимо завтра о 09:00.",
             )
-            schedule_next_day(bot, user_id, day + 1)
+            await schedule_next_day(
+                bot,
+                user_id,
+                day + 1,
+                run_at=next_run,
+                persist=False,
+            )
             return
 
         # Курс завершено (день 5)
@@ -365,22 +400,86 @@ async def notify_admin_no_next_step(bot: Bot, user: dict) -> bool:
         return False
 
 
-def schedule_next_day(bot: Bot, user_id: int, next_day: int):
-    """Запланувати відправку наступного дня о 9:00 за київським часом."""
-    KYIV = zoneinfo.ZoneInfo("Europe/Kyiv")
+def _next_day_run_time(now_kyiv: datetime | None = None) -> datetime:
+    kyiv = zoneinfo.ZoneInfo("Europe/Kyiv")
+    now_kyiv = now_kyiv or datetime.now(kyiv)
+    return (now_kyiv + timedelta(days=1)).replace(
+        hour=9, minute=0, second=0, microsecond=0
+    ).astimezone(timezone.utc)
 
-    now_kyiv = datetime.now(KYIV)
-    tomorrow_kyiv = (now_kyiv + timedelta(days=1)).replace(hour=9, minute=0, second=0, microsecond=0)
-    send_time_utc = tomorrow_kyiv.astimezone(timezone.utc)
+
+async def deliver_scheduled_day(
+    bot: Bot,
+    user_id: int,
+    next_day: int,
+    expected_send_at: str,
+) -> None:
+    if not await claim_scheduled_course_day(user_id, expected_send_at):
+        logger.info("Запланований день уже забрано іншим job: user=%s day=%s", user_id, next_day)
+        return
+    await send_day(bot, user_id, next_day)
+
+
+async def schedule_next_day(
+    bot: Bot,
+    user_id: int,
+    next_day: int,
+    *,
+    run_at: datetime | None = None,
+    persist: bool = True,
+):
+    """Запланувати відправку наступного дня о 9:00 за київським часом."""
+    send_time_utc = run_at or _next_day_run_time()
+    expected_send_at = send_time_utc.isoformat()
+    if persist:
+        await set_next_send_at(user_id, expected_send_at)
 
     scheduler.add_job(
-        send_day,
+        deliver_scheduled_day,
         trigger=DateTrigger(run_date=send_time_utc),
-        args=[bot, user_id, next_day],
+        args=[bot, user_id, next_day, expected_send_at],
         id=f"day_{next_day}_user_{user_id}",
         replace_existing=True,
     )
-    logger.info(f"Заплановано День {next_day} для user {user_id} на {tomorrow_kyiv} (Kyiv)")
+    logger.info("Заплановано День %s для user %s на %s", next_day, user_id, expected_send_at)
+
+
+async def restore_course_schedules(bot: Bot) -> None:
+    """Відновити jobs із SQLite після кожного запуску контейнера."""
+    now = datetime.now(timezone.utc)
+    rows = await get_scheduled_course_days()
+    for row in rows:
+        expected = str(row["next_send_at"])
+        run_at = datetime.fromisoformat(expected)
+        if run_at.tzinfo is None:
+            run_at = run_at.replace(tzinfo=timezone.utc)
+        if run_at <= now:
+            await deliver_scheduled_day(
+                bot,
+                int(row["user_id"]),
+                int(row["next_day"]),
+                expected,
+            )
+        else:
+            await schedule_next_day(
+                bot,
+                int(row["user_id"]),
+                int(row["next_day"]),
+                run_at=run_at,
+                persist=False,
+            )
+    logger.info("Відновлено розкладів курсу: %s", len(rows))
+
+
+async def process_due_course_days(bot: Bot) -> None:
+    """Страховка: кожні 5 хвилин забрати прострочені дні з SQLite."""
+    for row in await get_scheduled_course_days(due_only=True):
+        await deliver_scheduled_day(
+            bot,
+            int(row["user_id"]),
+            int(row["next_day"]),
+            str(row["next_send_at"]),
+        )
 
 
 async def recovery_check(bot: Bot):
@@ -401,16 +500,29 @@ async def recovery_check(bot: Bot):
         current_day = user['current_day']
         last_sent = user.get('last_sent_day', 0)
         sending_status = user.get('sending_status', 'idle')
+        was_stale_delivery = sending_status == 'sending'
 
         # Скидаємо завислий статус 'sending' (якщо бот впав під час відправки)
         if sending_status == 'sending':
             logger.warning(f"🔄 Користувач {user_id}: скидання завислого статусу 'sending'")
             await set_sending_status(user_id, 'idle')
 
-        # Знаходимо перший невидправлений день
+        waiting_day = user.get("progress_waiting_day")
+        waiting_block = user.get("progress_waiting_block")
+        if waiting_day is not None and waiting_block is not None:
+            logger.info(
+                "Recovery: user %s, відновлюємо день %s блок %s",
+                user_id,
+                waiting_day,
+                waiting_block,
+            )
+            await send_block(bot, user_id, int(waiting_day), int(waiting_block))
+            break
+
+        # Знаходимо перший невідправлений день
         missed_day = last_sent + 1
         
-        if missed_day > current_day:
+        if missed_day > current_day and not was_stale_delivery:
             logger.warning(f"Користувач {user_id}: last_sent > current_day. Оновлюємо current_day.")
             await update_user_day(user_id, last_sent)
             continue

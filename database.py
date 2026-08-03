@@ -8,7 +8,7 @@ import json
 import logging
 from pathlib import Path
 from datetime import datetime, timedelta, timezone
-from config import DATABASE_PATH, DAY_DELAY
+from config import DATABASE_PATH
 
 logger = logging.getLogger(__name__)
 
@@ -209,11 +209,14 @@ async def update_user_day(user_id: int, day: int):
         await db.execute("UPDATE users SET current_day = ? WHERE user_id = ?", (day, user_id))
         await db.commit()
 
-async def update_user_after_send(user_id: int, day: int):
+async def update_user_after_send(
+    user_id: int,
+    day: int,
+    next_send_at: str | None = None,
+):
     """Оновити статус користувача після успішної відправки дня."""
     async with aiosqlite.connect(DATABASE_PATH) as db:
         now = datetime.now().isoformat()
-        next_time = (datetime.now() + timedelta(seconds=DAY_DELAY)).isoformat()
         await db.execute("""
             UPDATE users 
             SET current_day = ?,
@@ -223,9 +226,64 @@ async def update_user_after_send(user_id: int, day: int):
                 sending_status = 'idle',
                 sending_started_at = NULL
             WHERE user_id = ?
-        """, (day, day, now, next_time, user_id))
+        """, (day, day, now, next_send_at, user_id))
         await db.commit()
         logger.info(f"Користувач {user_id}: оновлено статус після відправки дня {day}")
+
+
+async def set_next_send_at(user_id: int, next_send_at: str | None) -> None:
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        await db.execute(
+            "UPDATE users SET next_send_at = ? WHERE user_id = ?",
+            (next_send_at, user_id),
+        )
+        await db.commit()
+
+
+async def get_scheduled_course_days(*, due_only: bool = False):
+    """Повернути заплановані дні; SQLite є джерелом правди для розкладу."""
+    params: tuple[str, ...] = ()
+    due_filter = ""
+    if due_only:
+        due_filter = "AND users.next_send_at <= ?"
+        params = (datetime.now(timezone.utc).isoformat(),)
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            f"""
+            SELECT users.user_id, users.last_sent_day + 1 AS next_day,
+                   users.next_send_at
+            FROM users
+            WHERE users.is_active = 1
+              AND users.course_status = 'active'
+              AND users.last_sent_day < 5
+              AND users.next_send_at IS NOT NULL
+              AND users.progress_waiting_day IS NULL
+              AND EXISTS (
+                  SELECT 1 FROM access_grants
+                  WHERE access_grants.user_id = users.user_id
+              )
+              {due_filter}
+            ORDER BY users.next_send_at
+            """,
+            params,
+        ) as cursor:
+            return [dict(row) for row in await cursor.fetchall()]
+
+
+async def claim_scheduled_course_day(user_id: int, expected_send_at: str) -> bool:
+    """Атомарно забрати відправлення, щоб job і safety-check не дублювали день."""
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        cursor = await db.execute(
+            """
+            UPDATE users
+            SET next_send_at = NULL
+            WHERE user_id = ? AND next_send_at = ?
+            """,
+            (user_id, expected_send_at),
+        )
+        await db.commit()
+        return cursor.rowcount == 1
 
 async def set_sending_status(user_id: int, status: str):
     """Встановити статус відправки (для захисту від дублікатів)."""
@@ -237,6 +295,22 @@ async def set_sending_status(user_id: int, status: str):
             WHERE user_id = ?
         """, (status, now, user_id))
         await db.commit()
+
+
+async def claim_sending_status(user_id: int) -> bool:
+    """Не дозволити двом одночасним callback відправити той самий блок двічі."""
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        now = datetime.now(timezone.utc).isoformat()
+        cursor = await db.execute(
+            """
+            UPDATE users
+            SET sending_status = 'sending', sending_started_at = ?
+            WHERE user_id = ? AND COALESCE(sending_status, 'idle') != 'sending'
+            """,
+            (now, user_id),
+        )
+        await db.commit()
+        return cursor.rowcount == 1
 
 async def get_users_for_recovery():
     """Отримати користувачів, яким потрібно надіслати пропущені дні."""

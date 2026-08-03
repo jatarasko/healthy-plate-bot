@@ -17,6 +17,7 @@ from scheduler import (
     init_scheduler,
     stop_scheduler,
     recovery_check,
+    restore_course_schedules,
     schedule_completion_checks,
     process_course_completions,
 )
@@ -49,23 +50,14 @@ async def main():
     logger.info("Запуск планувальника...")
     init_scheduler()
 
-    logger.info("🧐 Запуск recovery-перевірки...")
-    # Створюємо фіктивний bot об'єкт для перевірки (реальний ще не створений)
-    # Але нам потрібен токен для API
-    temp_bot = Bot(
-        token=BOT_TOKEN,
-        default=DefaultBotProperties(parse_mode=ParseMode.HTML),
-    )
-    
-    # Викликаємо recovery перед запуском polling
-    await recovery_check(temp_bot)
-    await temp_bot.session.close()  # Закриваємо сесію тимчасового бота
-
     logger.info("Запуск бота...")
     bot = Bot(
         token=BOT_TOKEN,
         default=DefaultBotProperties(parse_mode=ParseMode.HTML),
     )
+    logger.info("🧐 Запуск recovery-перевірки...")
+    await recovery_check(bot)
+    await restore_course_schedules(bot)
     schedule_completion_checks(bot)
     await process_course_completions(bot)
     dp = Dispatcher()
@@ -84,7 +76,7 @@ async def main():
 
     # Видаляємо вебхук (якщо був) і запускаємо polling
     try:
-        await bot.delete_webhook(drop_pending_updates=True)
+        await bot.delete_webhook(drop_pending_updates=False)
     except Exception:
         pass
     logger.info("✅ Бот запущений! Очікування повідомлень...")

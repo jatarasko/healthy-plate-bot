@@ -17,7 +17,7 @@ from database import (
     record_course_event,
     register_user,
 )
-from bot_utils.keyboards import start_course_keyboard
+from bot_utils.keyboards import next_button, start_course_keyboard
 from states import CourseState, FeedbackState
 from content.course import WELCOME_MSG
 from scheduler import schedule_next_day, send_block
@@ -58,6 +58,25 @@ async def cmd_start(message: Message):
         last_name=user.last_name or "",
     )
 
+    course_user = await get_user(user.id)
+    if course_user and course_user.get("course_status") == "completed":
+        await message.answer("🎉 Ви вже завершили курс. Дякую, що пройшли його!")
+        return
+    if course_user and course_user.get("progress_waiting_day") is not None:
+        day = int(course_user["progress_waiting_day"])
+        block = int(course_user["progress_waiting_block"])
+        await message.answer(
+            f"Курс уже розпочато. Продовжуємо День {day} з місця зупинки:",
+            reply_markup=next_button(day, block),
+        )
+        return
+    if course_user and int(course_user.get("last_sent_day") or 0) > 0:
+        await message.answer(
+            f"✅ День {course_user['last_sent_day']} завершено. "
+            "Наступний день надійде за розкладом."
+        )
+        return
+
     await message.answer(
         WELCOME_MSG,
         reply_markup=start_course_keyboard(),
@@ -69,6 +88,14 @@ async def cmd_start(message: Message):
 async def start_course(callback: CallbackQuery, state: FSMContext):
     """Користувач натиснув 'Почати курс' — відправляємо перший блок."""
     user_id = callback.from_user.id
+    user = await get_user(user_id)
+    if user and (
+        user.get("course_status") == "completed"
+        or user.get("progress_waiting_day") is not None
+        or int(user.get("last_sent_day") or 0) > 0
+    ):
+        await callback.answer("Курс уже розпочато. Натисніть /start, щоб продовжити.", show_alert=True)
+        return
     await callback.answer("Курс розпочато! 🎉")
     await state.set_state(CourseState.viewing_day)
     await state.update_data(day=1, block_idx=0)
@@ -145,7 +172,7 @@ async def schedule_day_handler(callback: CallbackQuery):
     day = int(callback.data.replace("schedule_day_", ""))
 
     try:
-        schedule_next_day(callback.bot, user_id, day)
+        await schedule_next_day(callback.bot, user_id, day)
         await callback.answer(f"✅ День {day} заплановано на завтра о 9:00!")
     except Exception as e:
         logger.error(f"Помилка планування дня {day} для user {user_id}: {e}")
