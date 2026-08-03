@@ -6,6 +6,7 @@ from __future__ import annotations
 import aiosqlite
 import json
 import logging
+import sqlite3
 from pathlib import Path
 from datetime import datetime, timedelta, timezone
 from config import DATABASE_PATH
@@ -143,6 +144,40 @@ async def init_db():
         )
         await db.commit()
         logger.info(f"✅ База даних ініціалізована. Шлях: {DATABASE_PATH}")
+
+
+def create_database_backup(retain: int = 7) -> str:
+    """Створити консистентну SQLite-копію на Railway Volume і лишити останні N."""
+    source_path = Path(DATABASE_PATH)
+    backup_dir = source_path.parent / "backups"
+    backup_dir.mkdir(parents=True, exist_ok=True)
+    destination = backup_dir / f"healthy-{datetime.now(timezone.utc):%Y%m%d-%H%M%S}.sqlite3"
+    with sqlite3.connect(source_path) as source, sqlite3.connect(destination) as target:
+        source.backup(target)
+    backups = sorted(backup_dir.glob("healthy-*.sqlite3"), key=lambda path: path.stat().st_mtime, reverse=True)
+    for old in backups[retain:]:
+        old.unlink()
+    logger.info("Створено резервну копію: %s", destination)
+    return str(destination)
+
+
+async def get_delivery_health() -> dict[str, int]:
+    now = datetime.now(timezone.utc)
+    stale = (now - timedelta(minutes=10)).isoformat()
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        result = {}
+        queries = {
+            "active": "SELECT COUNT(*) FROM users WHERE is_active = 1 AND course_status = 'active'",
+            "scheduled": "SELECT COUNT(*) FROM users WHERE next_send_at IS NOT NULL",
+            "overdue": "SELECT COUNT(*) FROM users WHERE next_send_at IS NOT NULL AND next_send_at <= ?",
+            "stuck": "SELECT COUNT(*) FROM users WHERE sending_status = 'sending' AND sending_started_at <= ?",
+            "waiting": "SELECT COUNT(*) FROM users WHERE progress_waiting_day IS NOT NULL",
+        }
+        for key, query in queries.items():
+            params = (now.isoformat(),) if key == "overdue" else (stale,) if key == "stuck" else ()
+            async with db.execute(query, params) as cursor:
+                result[key] = (await cursor.fetchone())[0]
+    return result
 
 
 async def grant_course_access(user_id: int, token_fingerprint: str) -> None:

@@ -101,6 +101,11 @@ class HealthyPlateDatabaseTests(unittest.IsolatedAsyncioTestCase):
             await recovery_check(FailingBot())
         retry.assert_awaited_once_with(unittest.mock.ANY, 301, 2)
 
+    async def test_database_backup_is_readable(self):
+        backup = database.create_database_backup()
+        with database.sqlite3.connect(backup) as connection:
+            self.assertEqual(connection.execute("PRAGMA integrity_check").fetchone()[0], "ok")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -12,7 +12,7 @@ from aiogram.enums import ParseMode
 from aiogram.client.default import DefaultBotProperties
 
 from config import BOT_TOKEN, DATABASE_PATH
-from database import init_db
+from database import create_database_backup, init_db
 from scheduler import (
     init_scheduler,
     stop_scheduler,
@@ -46,6 +46,7 @@ async def main():
 
     logger.info("Ініціалізація бази даних...")
     await init_db()
+    create_database_backup()
 
     logger.info("Запуск планувальника...")
     init_scheduler()

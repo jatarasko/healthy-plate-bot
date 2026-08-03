@@ -138,6 +138,24 @@ def register_admin_handlers(dp: Dispatcher):
         )
         await message.answer(report, parse_mode="HTML")
 
+    @dp.message(Command("health"))
+    async def health_command(message: Message):
+        if message.from_user.id != ADMIN_ID:
+            return
+        from database import get_delivery_health
+
+        health = await get_delivery_health()
+        status = "✅ Норма" if health["overdue"] == 0 and health["stuck"] == 0 else "⚠️ Потрібна увага"
+        await message.answer(
+            f"🩺 <b>Стан доставки: {status}</b>\n\n"
+            f"Активні: {health['active']}\n"
+            f"Очікують наступний день: {health['scheduled']}\n"
+            f"Прострочені: {health['overdue']}\n"
+            f"Завислі відправлення: {health['stuck']}\n"
+            f"Очікують кнопку «Далі»: {health['waiting']}",
+            parse_mode="HTML",
+        )
+
     @dp.message(Command("followups"))
     async def followups_command(message: Message):
         """Показати випускників, які ще не обрали наступний крок."""

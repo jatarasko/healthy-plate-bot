@@ -41,6 +41,7 @@ from database import (
     get_scheduled_course_days,
     claim_scheduled_course_day,
     set_next_send_at,
+    create_database_backup,
 )
 from content.course import get_day_blocks, IMAGES
 from bot_utils.keyboards import feedback_keyboard, next_button, cta_keyboard
@@ -92,6 +93,13 @@ def schedule_completion_checks(bot: Bot):
         trigger=IntervalTrigger(minutes=15),
         args=[bot],
         id="course_delivery_recovery",
+        replace_existing=True,
+        max_instances=1,
+    )
+    scheduler.add_job(
+        create_database_backup,
+        trigger=IntervalTrigger(hours=24),
+        id="daily_database_backup",
         replace_existing=True,
         max_instances=1,
     )
