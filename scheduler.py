@@ -44,6 +44,7 @@ from database import (
     create_database_backup,
 )
 from content.course import get_day_blocks, IMAGES
+from content.offers import NEXT_STEP_INTRO
 from bot_utils.keyboards import feedback_keyboard, next_button, cta_keyboard
 from config import ADMIN_ID
 from admin_notifications import send_admin_message
@@ -229,10 +230,7 @@ async def send_block(bot: Bot, user_id: int, day: int, block_idx: int):
             )
             await bot.send_message(
                 chat_id=user_id,
-                text=(
-                    "🎯 <b>Що зараз найбільше заважає рухатись далі?</b>\n\n"
-                    "Обери свою ситуацію — бот покаже рішення, результат і наступну дію."
-                ),
+                text=NEXT_STEP_INTRO,
                 reply_markup=cta_keyboard(),
                 parse_mode="HTML",
             )
@@ -299,15 +297,16 @@ async def process_course_completions(bot: Bot):
             continue
         if stage == 1:
             text = (
-                "🌿 <b>Як твої справи після курсу?</b>\n\n"
-                "Щоб знання перетворились на звичку, обери формат, який найкраще "
-                "підтримає тебе далі 👇"
+                "🌿 <b>Хочеш продовжити після «Здорової Тарілки»?</b>\n\n"
+                "Можна поглибити тему харчування, додати більше руху або отримати "
+                "персональну підтримку. Переглянь варіанти й обери лише те, що "
+                "зараз справді доречно 👇"
             )
         else:
             text = (
-                "💛 <b>Невелике нагадування про наступний крок</b>\n\n"
-                "Якщо складно визначитись, почни з консультації: розберемо твою "
-                "ситуацію та підберемо доречний формат без зайвих зобов’язань 👇"
+                "💛 <b>Варіанти продовження залишаються доступними</b>\n\n"
+                "Якщо захочеш додати нову звичку або отримати підтримку, тут можна "
+                "спокійно переглянути формати без жодних зобов’язань 👇"
             )
         try:
             await bot.send_message(

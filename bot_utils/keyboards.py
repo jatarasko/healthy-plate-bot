@@ -81,29 +81,29 @@ def feedback_answer_keyboard(question_index: int) -> InlineKeyboardMarkup | None
 
 
 def cta_keyboard() -> InlineKeyboardMarkup:
-    """Діагностична клавіатура: починаємо з проблеми, а не з назви продукту."""
+    """Варіанти продовження без припущення, що учасник «застряг»."""
     return InlineKeyboardMarkup(inline_keyboard=[
         [
             InlineKeyboardButton(
-                text="🍽 Не знаю, що готувати",
+                text="🍽 Спростити щоденне харчування",
                 callback_data="cta_recipes"
             )
         ],
         [
             InlineKeyboardButton(
-                text="🏃 Хочу більше рухатись",
+                text="🏃 Додати більше руху",
                 callback_data="cta_movement"
             )
         ],
         [
             InlineKeyboardButton(
-                text="🔁 Складно тримати регулярність",
+                text="🔁 Закріпити результат із підтримкою",
                 callback_data="cta_online"
             )
         ],
         [
             InlineKeyboardButton(
-                text="🎯 Потрібна особиста порада",
+                text="🎯 Отримати персональний план",
                 callback_data="cta_consultation"
             )
         ],

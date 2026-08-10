@@ -29,6 +29,9 @@ ACCESS_TOKEN_SECRET = os.getenv("ACCESS_TOKEN_SECRET", "").strip()
 if len(ACCESS_TOKEN_SECRET.encode("utf-8")) < 32:
     raise ValueError("ACCESS_TOKEN_SECRET має містити щонайменше 32 байти")
 SALES_BOT_USERNAME = os.getenv("SALES_BOT_USERNAME", "").strip().lstrip("@")
+SUPPORT_TELEGRAM_USERNAME = os.getenv(
+    "SUPPORT_TELEGRAM_USERNAME", "Taras_Kolodii"
+).strip().lstrip("@")
 
 # Затримка між днями курсу (в секундах)
 # 86400 = 24 години. Для тестування можна поставити 60 (1 хвилина)

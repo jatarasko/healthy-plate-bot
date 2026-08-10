@@ -16,7 +16,7 @@ from aiogram.types import (
 )
 from aiogram.fsm.context import FSMContext
 
-from config import ADMIN_ID, SALES_BOT_USERNAME
+from config import ADMIN_ID, SALES_BOT_USERNAME, SUPPORT_TELEGRAM_USERNAME
 from admin_notifications import send_admin_message
 from database import (
     complete_feedback_submission,
@@ -29,6 +29,7 @@ from database import (
 )
 from states import FeedbackState
 from content.course import FEEDBACK_QUESTIONS, FEEDBACK_QUESTION_KEYS, FEEDBACK_THANKS
+from content.offers import MOVEMENT_OFFER, NEXT_STEP_INTRO
 from bot_utils.keyboards import cta_keyboard, feedback_answer_keyboard
 
 router = Router()
@@ -95,8 +96,7 @@ async def _finish_feedback(
     )
     await state.clear()
     await message.answer(
-        "🎯 <b>Що зараз найбільше заважає рухатись далі?</b>\n\n"
-        "Обери свою ситуацію — я покажу рішення й поясню, який результат воно дає.",
+        NEXT_STEP_INTRO,
         reply_markup=cta_keyboard(),
         parse_mode="HTML",
     )
@@ -316,10 +316,7 @@ async def cta_handler(callback: CallbackQuery):
     if cta == "movement":
         await callback.answer()
         await callback.message.answer(
-            "🏃‍♂️ <b>Щоб рух став частиною дня, а не черговим складним стартом</b>\n\n"
-            "Курс допоможе оцінити свій рівень, підібрати посильну активність і "
-            "крок за кроком сформувати звичку без виснажливих вимог.\n\n"
-            "Результат — більше щоденного руху та зрозумілий план, з якого легко почати.",
+            MOVEMENT_OFFER,
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
                 InlineKeyboardButton(text="Переглянути курс і залишити заявку", url=_sales_url("course_active"))
             ]]),
@@ -332,10 +329,13 @@ async def cta_handler(callback: CallbackQuery):
         await callback.answer()
         await callback.message.answer(
             "🔙 <b>Підтримка</b>\n\n"
-            "Якщо у тебе виникли питання або щось не працює — напиши нам.\n\n"
-            "📧 Email: support@kolodii.fitness\n"
-            "💬 Telegram: @Taras_Kolodii\n\n"
-            "Ми відповідаємо протягом 24 годин.",
+            "Якщо виникли питання або щось не працює — напиши Тарасу в Telegram.",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
+                InlineKeyboardButton(
+                    text="💬 Написати Тарасу",
+                    url=f"https://t.me/{SUPPORT_TELEGRAM_USERNAME}",
+                )
+            ]]),
             parse_mode="HTML",
         )
         return
